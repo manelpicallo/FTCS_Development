@@ -60,12 +60,12 @@ FTCS_LiveSlotsWorker_Active = true;
         };
 
         // Check if platoon is currently marching along a road
+        // PHASE 3: platoon state is read from the REGISTRY (RULE 16) via the
+        // platoon accessor; fn_registryGetPlatoon still falls back to the
+        // doctrine mirror while the migration is in progress.
         private _pId = missionNamespace getVariable ["FTCS_Player_Platoon_ID", 1];
-        private _pltKey = format ["PLT_%1", _pId];
-        private _platoonsMap = FTCS_Company_Data getOrDefault ["platoons", createHashMap];
-        private _pltData = _platoonsMap getOrDefault [_pltKey, createHashMap];
-        private _technique = _pltData getOrDefault ["movementTechnique", "CROSS_COUNTRY"];
-        private _activePath = _pltData getOrDefault ["roadPath", []];
+        private _technique = [_pId, "movementTechnique", "CROSS_COUNTRY"] call FTCS_fnc_registryGetPlatoon;
+        private _activePath = [_pId, "roadPath", []] call FTCS_fnc_registryGetPlatoon;
         private _isRoadMode = (_technique == "ROAD_COLUMN" && count _activePath >= 2);
         private _isTrailMode = (_technique == "TRAIL_COLUMN");
 

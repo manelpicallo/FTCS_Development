@@ -288,12 +288,42 @@ private _tacticalPlatoonIndex = 1;
             ["roadPath", []]
         ]];
 
+        // PHASE 7 - project the DOCTRINE SLOT TEMPLATE into the platoon registry.
+        // Two distinct fields with distinct lifecycles:
+        //   "doctrineFormationSlots" : IMMUTABLE template (from the composition).
+        //                              Never written again after seeding; used to
+        //                              RESET the live map back to doctrine.
+        //   "formationSlots"         : LIVE slot map. Seeded from the template and
+        //                              MUTATED at runtime (scout detachment, future
+        //                              player re-ordering of squads, casualties).
+        // Runtime consumers read "formationSlots" ONLY (RULE 16).
+        private _pltNumSeed = parseNumber ((_pltId splitString "_") select 1);
+        if (isNil "FTCS_Platoons_Registry") then { FTCS_Platoons_Registry = createHashMap; };
+        private _pltRegEntry = FTCS_Platoons_Registry getOrDefault [_pltNumSeed, createHashMap];
+        if (isNil { _pltRegEntry get "doctrineFormationSlots" }) then {
+            _pltRegEntry set ["doctrineFormationSlots", +_resolvedFormationSlots];
+        };
+        if (isNil { _pltRegEntry get "formationSlots" }) then {
+            _pltRegEntry set ["formationSlots", +_resolvedFormationSlots];
+        };
+        FTCS_Platoons_Registry set [_pltNumSeed, _pltRegEntry];
+        diag_log format ["[FTCS][REGISTRY] plt %1 doctrineFormationSlots seeded (%2 slots)", _pltNumSeed, count _resolvedFormationSlots];
+
         missionNamespace setVariable [format ["FTCS_Platoon_Phase_%1", _tacticalPlatoonIndex], 0];
 
         _tacticalPlatoonIndex = _tacticalPlatoonIndex + 1;
     };
 
 } forEach _platoonNames;
+
+// PHASE 9 - PROJECT THE DOCTRINE TEAM ROLES INTO A RUNTIME LOOKUP.
+// `parsedSquads` is created LATER by fn_parseEditorGroups, so a team object does
+// not exist yet at this point. The roles are stored as a plain INDEX -> ROLE
+// array on the doctrine data, which fn_registryInit consumes when it builds the
+// group entries (it knows the team's ordinal from its TEAM_<N> type).
+// This keeps "SCOUT" machine-readable end-to-end without touching display names
+// (Point 18) and without depending on HashMap iteration order.
+FTCS_Company_Data set ["doctrineTeamRoles", _teamRoles];
 
 // Overwrite company internal data
 FTCS_Company_Data set ["platoons", _newPlatoonsMap];

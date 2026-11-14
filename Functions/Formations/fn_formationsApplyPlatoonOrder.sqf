@@ -193,7 +193,11 @@ private _slottedElements = [[], [], [], [], [], [], [], [], [], [], [], [], []];
 // DOCTRINE: scout detachment mappings (outer slots 5,6,7,8,11,12 → team keys) are
 // EPHEMERAL per formation order - a new cross-country order wipes them, so detached
 // scouts re-join their doctrinal slot instead of resurrecting the old detachment.
-private _formationSlotsMap = _pltData getOrDefault ["formationSlots", createHashMap];
+// PHASE 3: read the slot map from the platoon REGISTRY (RULE 16). The accessor
+// falls back to the doctrine mirror when the field is not seeded yet, so this
+// pipeline keeps working mid-migration.
+private _formationSlotsMap = [_pltIdx, "formationSlots", createHashMap] call FTCS_fnc_registryGetPlatoon;
+if (!(_formationSlotsMap isEqualType createHashMap)) then { _formationSlotsMap = createHashMap; };
 private _detachedScoutKeys = [];
 {
     private _sIdx = _x;
@@ -202,10 +206,15 @@ private _detachedScoutKeys = [];
         _formationSlotsMap deleteAt _sIdx;
     };
 } forEach (keys _formationSlotsMap);
-_pltData set ["formationSlots", _formationSlotsMap];
+[_pltIdx, "formationSlots", _formationSlotsMap] call FTCS_fnc_registrySetPlatoon;
 if (count _formationSlotsMap == 0) then {
-    private _activeDocData = FTCS_Company_Data getOrDefault ["activeDoctrineData", createHashMap];
-    private _rawOverrides = _activeDocData getOrDefault ["platoonFormationSlots", createHashMap];
+    // PHASE 7: fall back to the IMMUTABLE DOCTRINE TEMPLATE held in the platoon
+    // registry ("doctrineFormationSlots"), seeded by fn_applyDoctrine. The
+    // doctrine tree is NO LONGER read at runtime (RULE 16).
+    // This path runs when the live map is empty - e.g. after every slot was
+    // wiped by a scout detachment sweep - and restores the doctrinal layout.
+    private _template = [_pltIdx, "doctrineFormationSlots", createHashMap] call FTCS_fnc_registryGetPlatoon;
+    if (!(_template isEqualType createHashMap)) then { _template = createHashMap; };
     {
         private _sIdx = _x;
         private _tPattern = _y;
@@ -215,7 +224,9 @@ if (count _formationSlotsMap == 0) then {
             _tPattern
         };
         _formationSlotsMap set [_sIdx, _resolvedVal];
-    } forEach _rawOverrides;
+    } forEach _template;
+    // Persist the freshly resolved map through the accessor (registry + mirror)
+    [_pltIdx, "formationSlots", _formationSlotsMap] call FTCS_fnc_registrySetPlatoon;
 };
 
 // Default deterministic assignment:
@@ -297,8 +308,9 @@ private _allSubordinateGroups = [];
 private _formationElements = [[_leaderGroup]] + _slottedElements;
 
 // Reset platoon movement technique to open cross-country formation (releasing road march mode cleanly)
-_pltData set ["movementTechnique", "CROSS_COUNTRY"];
-_pltData set ["roadPath", []];
+// PHASE 3: written through the platoon accessor (registry first, mirror second)
+[_pltIdx, "movementTechnique", "CROSS_COUNTRY"] call FTCS_fnc_registrySetPlatoon;
+[_pltIdx, "roadPath", []] call FTCS_fnc_registrySetPlatoon;
 _platoonsMap set [_pltKey, _pltData];
 
 // Invalidate every squad's marked 3D target: a NEW platoon formation restarts

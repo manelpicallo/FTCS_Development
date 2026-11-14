@@ -38,7 +38,10 @@ createHashMapFromArray [
         ["SQD_3_4", "Mortar Section"]
     ]],
     ["teamStructure", ["Rifle Team A", "Scout Team", "Rifle Team B", "BAR Support Team"]],
-    ["teamRoles", ["ASSAULT", "ASSAULT", "ASSAULT", "SUPPORT"]],
+    // "SCOUT" marks the team the platoon can detach to a scout slot (5/6/7/8/11/12).
+    // It is a SEMANTIC role declared here, so runtime code never has to guess the
+    // scout team from its display name (Point 18) or from HashMap iteration order.
+    ["teamRoles", ["ASSAULT", "SCOUT", "ASSAULT", "SUPPORT"]],
 
     // =========================================================================
     // PLATOON FORMATION MACRO SLOTS ALLOCATION (Slots 0 to 12)

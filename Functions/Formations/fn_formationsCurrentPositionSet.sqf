@@ -44,24 +44,31 @@ if (isNull _platoonLeaderUnit) then {
 
 if (isNull _platoonLeaderUnit) exitWith { false };
 
-// 1. Resolve platoon key and structure from FTCS_Company_Data
+// 1. Resolve platoon IDENTITY + STATE from the PLATOON REGISTRY (RULE 16).
+// Only the DISPLAY NAME comes from the doctrine tree (UI caption, Point 18).
 private _pltKey = missionNamespace getVariable ["FTCS_SelectedPlatoonKey", ""];
-if (_pltKey == "") then {
-    private _pId = missionNamespace getVariable ["FTCS_Player_Platoon_ID", 1];
-    _pltKey = format ["PLT_%1", _pId];
+private _pltNum = missionNamespace getVariable ["FTCS_Player_Platoon_ID", 1];
+if (_pltKey != "") then {
+    private _parsed = _pltKey splitString "_";
+    if (count _parsed > 1) then { _pltNum = parseNumber (_parsed select 1); };
 };
+private _pltEntryR = (missionNamespace getVariable ["FTCS_Platoons_Registry", createHashMap]) getOrDefault [_pltNum, createHashMap];
 private _platoonsMap = FTCS_Company_Data getOrDefault ["platoons", createHashMap];
-private _pltData = _platoonsMap getOrDefault [_pltKey, createHashMap];
-private _pltName = _pltData getOrDefault ["name", _pltKey];
-private _parsedSquads = _pltData getOrDefault ["parsedSquads", createHashMap];
+private _pltData = _platoonsMap getOrDefault [format ["PLT_%1", _pltNum], createHashMap];
+private _pltName = _pltData getOrDefault ["name", format ["PLT_%1", _pltNum]];
 
-if (count _parsedSquads == 0) exitWith {
-    systemChat format ["[FTCS Formations] Error: No parsed squads found for %1.", _pltKey];
+// Live group map: registry keys ARE groupIds, so hierarchy fields resolve to
+// actual group objects in one lookup.
+private _liveGroupMap = createHashMap;
+{ if (!isNull _x) then { _liveGroupMap set [groupId _x, _x]; }; } forEach allGroups;
+
+if (count (_pltEntryR getOrDefault ["squads", []]) == 0) exitWith {
+    systemChat format ["[FTCS Formations] Error: No registered squads found for %1.", _pltKey];
     false;
 };
 
 // 2. Validate operational phase: Troops in Phase 0 (DEPLOYMENT / INSPECTION) remain frozen
-private _currentPhase = _pltData getOrDefault ["currentPhase", 0];
+private _currentPhase = _pltEntryR getOrDefault ["currentPhase", 0];
 if (_currentPhase == 0) exitWith {
     systemChat format ["[FTCS Formations] %1 is in DEPLOYMENT / INSPECTION phase (Troops Frozen). Set Operational Phase first.", _pltName];
     hint parseText format ["<t color='#FFAA00'>[FORMATION BLOCKED]</t><br/><t color='#FFFFFF'>%1</t> is in inspection mode.<br/><t color='#00FFCC'>Action required:</t> Set Operational Phase (Approach / Combat) via Platoon Sergeant before locking formation.", _pltName];
@@ -87,115 +94,91 @@ missionNamespace setVariable ["FTCS_Last_Commander_Dir", _advanceDir];
 private _allSubordinateGroups = [];
 
 // 4. Capture Platoon HQ Sub-teams (Tier 1: anchored relative to Platoon Leader)
-private _hqSquadId = format ["SQD_%1_0", parseNumber ((_pltKey splitString "_") select 1)];
-private _hqSquadData = _parsedSquads getOrDefault [_hqSquadId, createHashMap];
-private _hqTeams = _hqSquadData getOrDefault ["tacticalTeams", createHashMap];
-
+// PHASE 6: the HQ element is identified by squadId (SQD_<N>_0) in the registry.
+private _hqSquadId = format ["SQD_%1_0", _pltNum];
 {
-    private _tGrp = (_y) getOrDefault ["group", grpNull];
-    if (!isNull _tGrp && {_tGrp != _leaderGroup}) then {
-        private _tLeader = leader _tGrp;
-        if (!isNull _tLeader) then {
-            private _tDist = _tLeader distance2D _platoonLeaderUnit;
-            private _tAngle = if (_isRelative) then {
-                _platoonLeaderUnit getRelDir _tLeader
-            } else {
-                ((_platoonLeaderUnit getDir _tLeader) - _advanceDir + 360) % 360
+    private _gEntry = _y;
+    if ((_gEntry getOrDefault ["squadId", ""]) isEqualTo _hqSquadId) then {
+        private _tGrp = _liveGroupMap getOrDefault [_x, grpNull];
+        if (!isNull _tGrp && {_tGrp != _leaderGroup}) then {
+            private _tLeader = leader _tGrp;
+            if (!isNull _tLeader) then {
+                private _tDist = _tLeader distance2D _platoonLeaderUnit;
+                private _tAngle = if (_isRelative) then {
+                    _platoonLeaderUnit getRelDir _tLeader
+                } else {
+                    ((_platoonLeaderUnit getDir _tLeader) - _advanceDir + 360) % 360
+                };
+                private _gId = groupId _tGrp;
+
+                [_gId, "formationPosition", [_tDist, _tAngle, _leaderGroup]] call FTCS_fnc_registrySet;
+                [_gId, "relPosition", [_tDist, _tAngle, _leaderGroup]] call FTCS_fnc_registrySet;
+
+                if !(_tGrp in _allSubordinateGroups) then { _allSubordinateGroups pushBack _tGrp; };
             };
-            private _gId = groupId _tGrp;
-
-            [_gId, "formationPosition", [_tDist, _tAngle, _leaderGroup]] call FTCS_fnc_registrySet;
-            [_gId, "relPosition", [_tDist, _tAngle, _leaderGroup]] call FTCS_fnc_registrySet;
-
-            if !(_tGrp in _allSubordinateGroups) then { _allSubordinateGroups pushBack _tGrp; };
         };
     };
-} forEach _hqTeams;
+} forEach FTCS_Groups_Registry_Table;
 
 // 5. Capture Combat Squads & nested Fireteams (Two-tier hierarchy)
-private _squadKeys = keys _parsedSquads;
-_squadKeys sort true;
-
+// PHASE 6: hierarchy comes from the registry (RULE 16):
+//   squadId            -> which squad a group belongs to
+//   isSquadLeaderGroup -> the ONE group carrying the Squad Leader (Tier 1)
+//   parentSquadGroup   -> the anchor a Tier-2 fireteam hangs from
+//
+// NOTE: the two-tier capture is a GEOMETRY pass, so it is done per SQUAD
+// (anchor first, then its teams) to keep the exact original semantics: Tier 1
+// relative to the platoon leader, Tier 2 relative to the squad anchor.
 {
-    private _sqdKey = _x;
-    if (_sqdKey find "_0" < 0) then {
-        private _sqdData = _parsedSquads get _sqdKey;
-        private _squadGroup = _sqdData getOrDefault ["group", grpNull];
-        private _squadLeader = _sqdData getOrDefault ["leader", objNull];
-        private _tacticalTeams = _sqdData getOrDefault ["tacticalTeams", createHashMap];
+    private _sqdAnchor = _x;
+    if (!isNull _sqdAnchor && { _sqdAnchor != _leaderGroup }) then {
+        private _sqdId = (FTCS_Groups_Registry_Table getOrDefault [groupId _sqdAnchor, createHashMap]) getOrDefault ["squadId", ""];
 
-        // Tier 1: Squad Leader anchored relative to Platoon Leader
-        private _squadAnchorObj = if (!isNull _squadLeader) then { _squadLeader } else { if (!isNull _squadGroup) then { leader _squadGroup } else { objNull } };
-        private _squadAnchorGrp = if (!isNull _squadGroup) then { _squadGroup } else { grpNull };
+        // Skip the HQ element: it was captured in step 4
+        if (!(_sqdId isEqualTo _hqSquadId)) then {
+            // ---- Tier 1: squad anchor relative to the Platoon Leader
+            private _sqdAnchorObj = leader _sqdAnchor;
+            if (!isNull _sqdAnchorObj) then {
+                private _sqdDist = _sqdAnchorObj distance2D _platoonLeaderUnit;
+                private _sqdAngle = if (_isRelative) then {
+                    _platoonLeaderUnit getRelDir _sqdAnchorObj
+                } else {
+                    ((_platoonLeaderUnit getDir _sqdAnchorObj) - _advanceDir + 360) % 360
+                };
+                private _aId = groupId _sqdAnchor;
 
-        if (!isNull _squadAnchorObj) then {
-            private _sqdDist = _squadAnchorObj distance2D _platoonLeaderUnit;
-            private _sqdAngle = if (_isRelative) then {
-                _platoonLeaderUnit getRelDir _squadAnchorObj
-            } else {
-                ((_platoonLeaderUnit getDir _squadAnchorObj) - _advanceDir + 360) % 360
-            };
+                [_aId, "formationPosition", [_sqdDist, _sqdAngle, _leaderGroup]] call FTCS_fnc_registrySet;
+                [_aId, "relPosition", [_sqdDist, _sqdAngle, _leaderGroup]] call FTCS_fnc_registrySet;
+                if !(_sqdAnchor in _allSubordinateGroups) then { _allSubordinateGroups pushBack _sqdAnchor; };
 
-            // If unified squad (no multi-teams), anchor the base squad group to Platoon Leader
-            if (count _tacticalTeams == 0 && {!isNull _squadGroup}) then {
-                private _gId = groupId _squadGroup;
-                [_gId, "formationPosition", [_sqdDist, _sqdAngle, _leaderGroup]] call FTCS_fnc_registrySet;
-                [_gId, "relPosition", [_sqdDist, _sqdAngle, _leaderGroup]] call FTCS_fnc_registrySet;
-                if !(_squadGroup in _allSubordinateGroups) then { _allSubordinateGroups pushBack _squadGroup; };
-            };
-
-            // If multi-team squad, Team 1 (Squad Leader Team) anchors to Platoon Leader
-            if (count _tacticalTeams > 0) then {
-                private _tKeys = keys _tacticalTeams;
-                _tKeys sort true;
-
-                // Team 1 = Squad Leader
-                private _team1Key = _tKeys select 0;
-                private _team1Data = _tacticalTeams get _team1Key;
-                private _team1Grp = _team1Data getOrDefault ["group", grpNull];
-
-                if (!isNull _team1Grp) then {
-                    private _t1Leader = leader _team1Grp;
-                    private _t1Dist = _t1Leader distance2D _platoonLeaderUnit;
-                    private _t1Angle = if (_isRelative) then {
-                        _platoonLeaderUnit getRelDir _t1Leader
-                    } else {
-                        ((_platoonLeaderUnit getDir _t1Leader) - _advanceDir + 360) % 360
-                    };
-                    private _gId = groupId _team1Grp;
-
-                    [_gId, "formationPosition", [_t1Dist, _t1Angle, _leaderGroup]] call FTCS_fnc_registrySet;
-                    [_gId, "relPosition", [_t1Dist, _t1Angle, _leaderGroup]] call FTCS_fnc_registrySet;
-                    if !(_team1Grp in _allSubordinateGroups) then { _allSubordinateGroups pushBack _team1Grp; };
-
-                    // Tier 2: Sub-teams (Team 2, 3, 4) anchored relative to Team 1 (Squad Leader)
-                    for "_idx" from 1 to ((count _tKeys) - 1) do {
-                        private _subTeamKey = _tKeys select _idx;
-                        private _subTeamData = _tacticalTeams get _subTeamKey;
-                        private _subTeamGrp = _subTeamData getOrDefault ["group", grpNull];
-
+                // ---- Tier 2: fireteams of this squad relative to the anchor
+                {
+                    private _teamEntry = _y;
+                    if ((_teamEntry getOrDefault ["squadId", ""]) isEqualTo _sqdId
+                        && { !(_teamEntry getOrDefault ["isSquadLeaderGroup", false]) }) then {
+                        private _subTeamGrp = _liveGroupMap getOrDefault [_x, grpNull];
                         if (!isNull _subTeamGrp) then {
                             private _subLeader = leader _subTeamGrp;
                             if (!isNull _subLeader) then {
-                                private _subDist = _subLeader distance2D _t1Leader;
+                                private _subDist = _subLeader distance2D _sqdAnchorObj;
                                 private _subAngle = if (_isRelative) then {
-                                    _t1Leader getRelDir _subLeader
+                                    _sqdAnchorObj getRelDir _subLeader
                                 } else {
-                                    ((_t1Leader getDir _subLeader) - _advanceDir + 360) % 360
+                                    ((_sqdAnchorObj getDir _subLeader) - _advanceDir + 360) % 360
                                 };
                                 private _subGId = groupId _subTeamGrp;
 
-                                [_subGId, "formationPosition", [_subDist, _subAngle, _team1Grp]] call FTCS_fnc_registrySet;
-                                [_subGId, "relPosition", [_subDist, _subAngle, _team1Grp]] call FTCS_fnc_registrySet;
+                                [_subGId, "formationPosition", [_subDist, _subAngle, _sqdAnchor]] call FTCS_fnc_registrySet;
+                                [_subGId, "relPosition", [_subDist, _subAngle, _sqdAnchor]] call FTCS_fnc_registrySet;
                                 if !(_subTeamGrp in _allSubordinateGroups) then { _allSubordinateGroups pushBack _subTeamGrp; };
                             };
                         };
                     };
-                };
+                } forEach FTCS_Groups_Registry_Table;
             };
         };
     };
-} forEach _squadKeys;
+} forEach (_pltEntryR getOrDefault ["squads", []]);
 
 // 6. Launch concurrent follow-commander movement threads for all subordinate groups
 if (count _allSubordinateGroups > 0) then {

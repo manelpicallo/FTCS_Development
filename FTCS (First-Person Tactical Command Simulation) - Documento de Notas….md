@@ -71,6 +71,13 @@
 
    - Nunca pedir re-entrada al editor "por si acaso" sin ese doble chequeo de timestamps + log.
 
+18. **PROHIBIDO ABSOLUTO: nombres doctrinales/de display como identificadores de código:**
+    - Los nombres doctrinales/de display ("1st Rifle Squad", "HQ - 1st Platoon", "Rifle Team A", etc.) existen SOLO como representación histórica y humana de la composición de unidades, para el jugador. **Nunca, bajo ninguna circunstancia, se usan como identificadores dentro del código**: ni como claves de búsqueda, ni para coincidencias de prefijo (`find`, `findIf`, `splitString`), ni en comprobaciones `in`, ni para comparar contra claves del registro, ids de grupo o nombres de variables de namespace.
+    - Motivo: las claves de `FTCS_Groups_Registry_Table` SON nombres doctrinales (`groupId`). Cualquier matching sintético tipo `format ["SQD_%1_", _pltId]` contra ellas NUNCA coincide (falla silenciosamente, sin error: simplemente resultan cero participantes — caso documentado en `fn_platoonHaltRejoin.sqf`).
+    - Referencias internas obligatorias: OBJETOS de grupo resueltos desde los registros sembrados (`FTCS_Platoons_Registry > pltId > "squads"`), campos de enlace sellados por el registro (`parentSquadGroup` y similares escritos por `fn_registryInit`), y pertenencia a familia por IGUALDAD DE REFERENCIA de objeto (`_grp in _squadList`, `_entry get "parentSquadGroup" == _sqdGrp`), jamás por nombre.
+    - Invariante jerárquica obligatoria para TODA función de movimiento/órdenes (pelotón, squad, HALT, REJOIN, marchas, formaciones): (1) el teniente es el ancla del pelotón; los grupos LÍDER de cada squad ocupan los slots 0–12 asignados por el teniente y le siguen (REL/ABS); (2) TODOS los demás grupos internos de un squad siguen SIEMPRE a su PROPIO LÍDER DE SQUAD, nunca al teniente, preservando la geometría de formación; (3) única excepción: grupos re-asignados explícitamente a un slot dirigido por el teniente (ej. scouts a slots 5/6/7/8/11/12) quedan temporalmente anclados a él hasta re-anclarse a su líder de squad. Toda función nueva debe verificarse contra este invariante antes de integrarse; violarlo ES un bug por definición.
+    - Cumplimiento: antes de entregar cualquier cambio, buscar en él coincidencias de cadenas contra nombres doctrinales; si existen, rediseñar usando referencias de objeto del registro. Sin excepciones.
+
 **Validación contra este documento:**
 
 - Antes de proponer o modificar código, comprueba que el cambio cumple las especificaciones de este documento.

@@ -235,9 +235,14 @@ private _playerSide = side group player;
                                     private _tacticalTeams = _squadData getOrDefault ["tacticalTeams", createHashMap];
                                     private _teamId = format ["SQD_%1_%2_%3", _pltIndex, _sqdIndex, _upperTeamSuffix];
                                     
+                                    // tacticalRole is resolved LATER by fn_registryInit, which reads it
+                                    // from the doctrine teamRoles array. It cannot be stamped here:
+                                    // fn_applyDoctrine never creates parsedSquads (this function does),
+                                    // so any template team read at this point does not exist yet.
                                     _tacticalTeams set [_teamId, createHashMapFromArray [
                                         ["teamId", _teamId],
                                         ["type", _upperTeamSuffix],
+                                        ["tacticalRole", ""],
                                         ["group", _group],
                                         ["units", units _group],
                                         ["leader", leader _group]

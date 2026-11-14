@@ -71,8 +71,10 @@ private _alignedOnStop = false;
 private _facingAppliedOnReady = false;
 
 while {((_group getVariable ["FTCS_FollowThread_ID", -1]) == _threadID) && 
-       ((([ _groupID, "movingMode" ] call FTCS_fnc_registryGet) == _mode) || 
-        (([ _groupID, "movingMode" ] call FTCS_fnc_registryGet) == "HALT"))} do
+       (([ _groupID, "movingMode" ] call FTCS_fnc_registryGet) == _mode)} do
+// movingMode == "HALT" (platoon HALT, fn_platoonHaltRejoin) does NOT match
+// _mode -> the while exits and the group leaves its follow loop: a halted
+// group stops following its leader until its mode is rewritten (REJOIN).
 {
     _spd = speed _leader;
 

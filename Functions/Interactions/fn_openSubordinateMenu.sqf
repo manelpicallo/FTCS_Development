@@ -151,10 +151,11 @@ if (_currentFollowMode == "FOLLOWING_COMMANDER_REL") then {
 // Dynamically evaluate combat effectiveness of detached scout slots (Slots 11, 12, 7, 6, 8, 5)
 // Gray out (disable) options if a combat-effective team already occupies that slot.
 // If all soldiers in that team are dead or incapacitated, re-enable ("1", "1") so fresh scouts can reinforce it.
-private _platoonsMap = FTCS_Company_Data getOrDefault ["platoons", createHashMap];
-private _activePltKey = format ["PLT_%1", _pltId];
-private _activePltData = _platoonsMap getOrDefault [_activePltKey, createHashMap];
-private _activeSlotsMap = _activePltData getOrDefault ["formationSlots", createHashMap];
+// PHASE 3: formationSlots is read from the platoon REGISTRY (RULE 16). The
+// accessor falls back to the doctrine mirror while the migration is in flight,
+// so the menu keeps working even if a slot map was not seeded yet.
+private _activeSlotsMap = [_pltId, "formationSlots", createHashMap] call FTCS_fnc_registryGetPlatoon;
+if (!(_activeSlotsMap isEqualType createHashMap)) then { _activeSlotsMap = createHashMap; };
 
 private _fnc_isSlotOccupiedAndEffective = {
     params ["_slotNum"];
@@ -261,18 +262,23 @@ if (!isNil "FTCS_MENU_RoadMarchLayout") then {
     // commander target is currently marked (Targeting class), and highlights
     // Rejoin when the squad is detached/pinned from its formation slot.
     // ------------------------------------------------------------------
+    // PHASE 8b: squad EXISTENCE comes from the registry ("squadId"), so the hub
+    // shows exactly the squads that are actually registered. The doctrine tree
+    // is consulted ONLY for the display caption (Point 18: label, not identity).
     private _pltIdD = missionNamespace getVariable ["FTCS_Player_Platoon_ID", 1];
     private _pltKeyD = format ["PLT_%1", _pltIdD];
     private _platoonsMapD = FTCS_Company_Data getOrDefault ["platoons", createHashMap];
     private _pltDataD = _platoonsMapD getOrDefault [_pltKeyD, createHashMap];
     private _parsedSquadsD = _pltDataD getOrDefault ["parsedSquads", createHashMap];
+    private _regSquadIds = createHashMap;
+    { if (((_y) getOrDefault ["platoonId", -1]) == _pltIdD) then { _regSquadIds set [(_y) getOrDefault ["squadId", ""], true]; }; } forEach FTCS_Groups_Registry_Table;
 
     // Hub rebuild: rows 2-5 map to squads 1-4 (show only existing doctrinal squads)
     private _sqdOrder = ["_1", "_2", "_3", "_4"];
     for "_si" from 1 to 4 do {
         private _sqdKeyD = format ["SQD_%1_%2", _pltIdD, _si];
         private _sDataD = _parsedSquadsD getOrDefault [_sqdKeyD, createHashMap];
-        private _hasSquadD = (count _sDataD > 0) || { !isNull (_sDataD getOrDefault ["group", grpNull]) };
+        private _hasSquadD = (_sqdKeyD in _regSquadIds);
         private _hubRow = FTCS_MENU_SquadDirectives select (1 + _si);
         private _doctName = _sDataD getOrDefault ["name", format ["Squad %1", _si]];
         _hubRow set [0, format ["%1. %2", _si + 1, _doctName]];

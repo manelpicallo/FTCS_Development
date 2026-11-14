@@ -26,57 +26,57 @@
 
 params [["_squadRef", grpNull], ["_require", "SQUAD_BOUND"]];
 
-// Resolve the doctrinal squad key from either a group object or a raw key
-private _pltId = missionNamespace getVariable ["FTCS_Player_Platoon_ID", 1];
+// PHASE 3: squad identity comes EXCLUSIVELY from the registry (RULE 16).
+// The old version walked FTCS_Company_Data > parsedSquads twice (once to find
+// the squad key, once to list its teams). The registry already carries both
+// links per group:
+//     "squadId"            -> "SQD_1_1"   (which squad the group belongs to)
+//     "isSquadLeaderGroup" -> anchor flag (the group that carries the SL)
+//     "teamAttachment"     -> SQUAD_BOUND | DETACHED_HOLD | DETACHED_FREE | ...
+// so one registry pass replaces two tree walks.
 private _sqdKey = "";
+private _anchorRef = grpNull;
 if (_squadRef isEqualType grpNull && { !isNull _squadRef }) then {
-    // Walk the parsed platoon data to find which squad owns this group
-    private _pltKey = format ["PLT_%1", _pltId];
-    private _platoonsMap = (missionNamespace getVariable ["FTCS_Company_Data", createHashMap]) getOrDefault ["platoons", createHashMap];
-    private _parsedSquads = (_platoonsMap getOrDefault [_pltKey, createHashMap]) getOrDefault ["parsedSquads", createHashMap];
-    {
-        private _key = _x;
-        private _data = _y;
-        private _match = false;
-        private _teams = _data getOrDefault ["tacticalTeams", createHashMap];
-        if (count _teams == 0) then { _teams = _data getOrDefault ["teams", createHashMap]; };
-        { if (((_y) getOrDefault ["group", grpNull]) == _squadRef) exitWith { _match = true; }; } forEach _teams;
-        if (!_match && { (_data getOrDefault ["group", grpNull]) == _squadRef }) then { _match = true; };
-        if (_match) exitWith { _sqdKey = _key; };
-    } forEach _parsedSquads;
+    private _refId = groupId _squadRef;
+    private _refEntry = FTCS_Groups_Registry_Table getOrDefault [_refId, createHashMap];
+    _sqdKey = _refEntry getOrDefault ["squadId", ""];
+    _anchorRef = _refEntry getOrDefault ["parentSquadGroup", grpNull];
+    // When the reference IS the anchor, parentSquadGroup self-references.
+    // NOTE: the comparison MUST be parenthesised - `!X isEqualTo Y` parses as
+    // `(!X) isEqualTo Y`, i.e. NOT applied to a STRING, which raises
+    // "Error !: Type String, expected Bool" at runtime (Lesson 7).
+    if (!isNull _anchorRef) then {
+        private _anchorEntry = FTCS_Groups_Registry_Table getOrDefault [groupId _anchorRef, createHashMap];
+        private _anchorSquad = _anchorEntry getOrDefault ["squadId", ""];
+        if (!(_anchorSquad isEqualTo _sqdKey)) then { _anchorRef = _squadRef; };
+    } else {
+        _anchorRef = _squadRef;
+    };
 } else {
     _sqdKey = _squadRef;
 };
 
 if (_sqdKey == "") exitWith { [] };
 
-// Gather every team group of the doctrinal squad (tacticalTeams or teams)
-private _pltKey = format ["PLT_%1", _pltId];
-private _platoonsMap = (missionNamespace getVariable ["FTCS_Company_Data", createHashMap]) getOrDefault ["platoons", createHashMap];
-private _parsedSquads = (_platoonsMap getOrDefault [_pltKey, createHashMap]) getOrDefault ["parsedSquads", createHashMap];
-private _sqdData = _parsedSquads getOrDefault [_sqdKey, createHashMap];
-
 private _boundTeams = [];
-private _teams = _sqdData getOrDefault ["tacticalTeams", createHashMap];
-if (count _teams == 0) then { _teams = _sqdData getOrDefault ["teams", createHashMap]; };
+private _liveGroupMap = createHashMap;
+{ if (!isNull _x) then { _liveGroupMap set [groupId _x, _x]; }; } forEach allGroups;
 
 {
-    private _grp = (_y) getOrDefault ["group", grpNull];
-    if (!isNull _grp) then {
-        private _entry = FTCS_Groups_Registry_Table getOrDefault [groupId _grp, createHashMap];
-        private _attach = _entry getOrDefault ["teamAttachment", "SQUAD_BOUND"];
-        if (_attach == _require) then { _boundTeams pushBack _grp; };
+    private _gId = _x;
+    private _entry = _y;
+    if ((_entry getOrDefault ["squadId", ""]) isEqualTo _sqdKey
+        && { (_entry getOrDefault ["teamAttachment", "SQUAD_BOUND"]) == _require }) then {
+        private _g = _liveGroupMap getOrDefault [_gId, grpNull];
+        if (!isNull _g) then { _boundTeams pushBack _g; };
     };
-} forEach _teams;
+} forEach FTCS_Groups_Registry_Table;
 
-// Fallback: squad-level group when no sub-teams resolved
-if (count _boundTeams == 0) then {
-    private _sqdGrp = _sqdData getOrDefault ["group", grpNull];
-    if (!isNull _sqdGrp) then {
-        private _entry = FTCS_Groups_Registry_Table getOrDefault [groupId _sqdGrp, createHashMap];
-        if ((_entry getOrDefault ["teamAttachment", "SQUAD_BOUND"]) == _require) then {
-            _boundTeams pushBack _sqdGrp;
-        };
+// Fallback: the squad anchor itself when no other team resolved (unified squads)
+if (count _boundTeams == 0 && { !isNull _anchorRef }) then {
+    private _entry = FTCS_Groups_Registry_Table getOrDefault [groupId _anchorRef, createHashMap];
+    if ((_entry getOrDefault ["teamAttachment", "SQUAD_BOUND"]) == _require) then {
+        _boundTeams pushBack _anchorRef;
     };
 };
 

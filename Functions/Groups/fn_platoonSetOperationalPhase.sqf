@@ -68,36 +68,28 @@ if (_targetPhase > 3) then { _targetPhase = 3; };
 if (_pltIndex < 1) then { _pltIndex = 1; };
 if (_pltIndex > 4) then { _pltIndex = 4; };
 
-// 1. Resolve platoon data and all constituent groups from FTCS_Company_Data
+// 1. Resolve all constituent groups of this platoon from the REGISTRY (RULE 16)
+// Every registered group carries "platoonId", so one registry pass yields the
+// whole platoon: squads, fireteams and HQ sub-teams alike. Live group objects
+// are resolved through allGroups (registry keys ARE the groupIds).
+// The doctrine tree is still consulted for the platoon DISPLAY NAME only
+// (UI caption; Point 18 forbids using it as an identifier, not as a label).
 private _pltKey = format ["PLT_%1", _pltIndex];
 private _platoonsMap = FTCS_Company_Data getOrDefault ["platoons", createHashMap];
 private _pltData = _platoonsMap getOrDefault [_pltKey, createHashMap];
 private _pltName = _pltData getOrDefault ["name", format ["%1 Platoon", _pltKey]];
-private _parsedSquads = _pltData getOrDefault ["parsedSquads", createHashMap];
 
 private _platoonGroups = [];
-
+private _liveGroupMap = createHashMap;
+{ if (!isNull _x) then { _liveGroupMap set [groupId _x, _x]; }; } forEach allGroups;
 {
-    private _sqdKey = _x;
-    private _sqdData = _y;
-
-    // Check base group of the squad
-    private _baseGrp = _sqdData getOrDefault ["group", grpNull];
-    if (!isNull _baseGrp && {!(_baseGrp in _platoonGroups)}) then {
-        _platoonGroups pushBack _baseGrp;
+    private _gId = _x;
+    private _gEntry = _y;
+    if ((_gEntry getOrDefault ["platoonId", -1]) == _pltIndex) then {
+        private _g = _liveGroupMap getOrDefault [_gId, grpNull];
+        if (!isNull _g) then { _platoonGroups pushBack _g; };
     };
-
-    // Check sub-teams (tacticalTeams for multi-team squads or HQ elements)
-    private _tacticalTeams = _sqdData getOrDefault ["tacticalTeams", createHashMap];
-    {
-        private _tData = _y;
-        private _tGrp = _tData getOrDefault ["group", grpNull];
-        if (!isNull _tGrp && {!(_tGrp in _platoonGroups)}) then {
-            _platoonGroups pushBack _tGrp;
-        };
-    } forEach _tacticalTeams;
-
-} forEach _parsedSquads;
+} forEach FTCS_Groups_Registry_Table;
 
 // 2. Apply doctrinal phase state to all platoon groups using modular group functions
 switch (_targetPhase) do {
@@ -158,9 +150,11 @@ switch (_targetPhase) do {
     };
 };
 
-// 3. Persist state in platoon-specific global variable and FTCS_Company_Data
+// 3. Persist state in platoon-specific global variable and the PLATOON REGISTRY
+// PHASE 4: registry-first write through the platoon accessor (mirrors into the
+// doctrine tree while the remaining consumers are migrated).
 missionNamespace setVariable [format ["FTCS_Platoon_Phase_%1", _pltIndex], _targetPhase];
-_pltData set ["currentPhase", _targetPhase];
+[_pltIndex, "currentPhase", _targetPhase] call FTCS_fnc_registrySetPlatoon;
 
 // Synchronize FTCS_CurrentPhase if this is the player's active command platoon
 private _playerPlatoonID = missionNamespace getVariable ["FTCS_Player_Platoon_ID", 1];

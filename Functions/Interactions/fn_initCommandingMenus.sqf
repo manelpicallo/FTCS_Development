@@ -118,7 +118,8 @@ FTCS_MENU_PlatoonFormations_P1 = [
     ["9. Follow Mode: Relative (Turn with Leader)", [10], "", -5, [["expression", "['PLT_MODE_RELATIVE'] call FTCS_fnc_applyCommandToTarget;"]], "1", "1"],
     ["10. Follow Mode: Absolute (Fixed Compass)", [11], "", -5, [["expression", "['PLT_MODE_ABSOLUTE'] call FTCS_fnc_applyCommandToTarget;"]], "1", "1"],
     ["11. HALT - Freeze Platoon (Lieutenant Explores)", [12], "", -5, [["expression", "['PLT_HALT'] call FTCS_fnc_applyCommandToTarget;"]], "1", "1"],
-    ["12. REJOIN - Re-group on Lieutenant", [13], "", -5, [["expression", "['PLT_REJOIN'] call FTCS_fnc_applyCommandToTarget;"]], "1", "1"]
+    ["12. REJOIN - Re-group (Arrive on Halt Facing)", [13], "", -5, [["expression", "['PLT_REJOIN_KEEP'] call FTCS_fnc_applyCommandToTarget;"]], "1", "1"],
+    ["13. REJOIN - Re-group (Lieutenant Current Facing)", [14], "", -5, [["expression", "['PLT_REJOIN_NEW'] call FTCS_fnc_applyCommandToTarget;"]], "1", "1"]
 ];
 
 // 1.2 Movement Techniques Submenu (Phase 1) - [ACTIVE]

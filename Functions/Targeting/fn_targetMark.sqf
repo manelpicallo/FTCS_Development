@@ -173,25 +173,30 @@ private _clickEH = (findDisplay 46) displayAddEventHandler ["MouseButtonDown", {
         // whole-team resolution works downstream.
         private _ownerIdx = missionNamespace getVariable ["FTCS_TGT_OwnerSquadIndex", 1];
         private _pltIdC = missionNamespace getVariable ["FTCS_Player_Platoon_ID", 1];
-        private _pltKeyC = format ["PLT_%1", _pltIdC];
-        private _pltMapC = (missionNamespace getVariable ["FTCS_Company_Data", createHashMap]) getOrDefault ["platoons", createHashMap];
-        private _pltDataC = _pltMapC getOrDefault [_pltKeyC, createHashMap];
-        private _parsedSqC = _pltDataC getOrDefault ["parsedSquads", createHashMap];
         private _sqdKeyC = format ["SQD_%1_%2", _pltIdC, _ownerIdx];
-        private _sqdDataC = _parsedSqC getOrDefault [_sqdKeyC, createHashMap];
 
+        // PHASE 4: squad membership comes from the REGISTRY (RULE 16) - every
+        // group carries "squadId", so the owning squad's groups are resolved in
+        // one pass instead of walking parsedSquads > tacticalTeams. The live
+        // group object is looked up in allGroups (registry keys are groupIds).
+        private _liveGroupMapC = createHashMap;
+        { if (!isNull _x) then { _liveGroupMapC set [groupId _x, _x]; }; } forEach allGroups;
         private _ownerGroups = [];
-        private _teamsC = _sqdDataC getOrDefault ["tacticalTeams", createHashMap];
-        if (count _teamsC == 0) then { _teamsC = _sqdDataC getOrDefault ["teams", createHashMap]; };
-        { private _g = (_y) getOrDefault ["group", grpNull]; if (!isNull _g) then { _ownerGroups pushBack _g }; } forEach _teamsC;
-        if (count _ownerGroups == 0) then {
-            private _g = _sqdDataC getOrDefault ["group", grpNull];
-            if (!isNull _g) then { _ownerGroups pushBack _g };
-        };
+        {
+            private _gId = _x;
+            private _gEntry = _y;
+            if ((_gEntry getOrDefault ["squadId", ""]) isEqualTo _sqdKeyC) then {
+                private _g = _liveGroupMapC getOrDefault [_gId, grpNull];
+                if (!isNull _g) then { _ownerGroups pushBack _g; };
+            };
+        } forEach FTCS_Groups_Registry_Table;
 
-        // Doctrinal squad name: read once at capture from the parsed squad data
-        // (same "name" field the dynamic menus use) - the persistent marker
-        // renders it as a second caption line without any per-frame lookup.
+        // Doctrinal squad name: the registry does not carry display names
+        // (Point 18 forbids using them as identifiers, but they are required as
+        // UI captions). Read once at capture from the doctrine tree only.
+        private _pltMapC = (missionNamespace getVariable ["FTCS_Company_Data", createHashMap]) getOrDefault ["platoons", createHashMap];
+        private _parsedSqC = (_pltMapC getOrDefault [format ["PLT_%1", _pltIdC], createHashMap]) getOrDefault ["parsedSquads", createHashMap];
+        private _sqdDataC = _parsedSqC getOrDefault [_sqdKeyC, createHashMap];
         private _sqdNameC = _sqdDataC getOrDefault ["name", _sqdKeyC];
 
         private _captured = false;

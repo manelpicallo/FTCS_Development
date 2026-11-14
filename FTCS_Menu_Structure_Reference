@@ -24,6 +24,9 @@ Las fases doctrinales (FM 3-21.8) se estructuran en 3 grandes etapas:
   * FASE 1 -> 1.C. Movement Techniques (Traveling, Traveling Overwatch)
   * FASE 2 -> 1.A. Operational Phase Transition (a1, a2, a3)
   * FASE 2 -> 1.B. Platoon Formations (Column, Wedge, Vee, Line, Echelon Right, Echelon Left, Relative/Absolute Follow Modes)
+    - Opcion 11: HALT - Freeze Platoon (congela todos los grupos; el teniente sigue explorando).
+    - Opcion 12: REJOIN - Re-group (Arrive on Halt Facing). Contrato KEEP: el eje congelado se escribe en las tres variables de eje (REL live dir + ABS fixed compass). En REL gobierna solo el despliegue de LLEGADA: en cuanto el teniente camina (>2 km/h) la formacion vuelve a orientarse con el (contrato REL). En ABS el eje congelado PERSISTE (contrato ABS de brujula fija).
+    - Opcion 13: REJOIN - Re-group (Lieutenant Current Facing). Contrato NEW: la geometria congelada se rota sobre el eje de avance actual del teniente.
 - Formaciones de Escuadra: Soportadas hasta 5 sub-equipos (1 Líder + hasta 4 grupos subordinados). En Fase 1 (APPROACH) los flancos de cuña/Vee adoptan dinámicamente ECHELON_RIGHT y ECHELON_LEFT para escalonamiento de marcha en columna relajada. En Fase 2 (CONTACT LIKELY / OVERWATCH) las escuadras recuperan su geometría táctica abierta completa (WEDGE/LINE) en disciplina estricta AWARE.
 - Resto de opciones: Visibles en UI pero desactivadas (gris claro / enable="0") hasta su implementación.
 

@@ -1,6 +1,24 @@
 # FTCS - Especificación Completa de la Estructura de Datos (Architecture & Data Model)
 
-> **Documento Vivo de Arquitectura:** Esta es la referencia técnica formal y visual del modelo de datos de FTCS.
+> **DOCUMENTO VIVO DE ARQUITECTURA — PUNTO CERO:** Esta es la referencia técnica formal y visual del modelo de datos de FTCS.
+
+---
+
+## 0. DIRECTRIZ OBLIGATORIA: ENUMS Y ESTADOS DEL REGISTRO (DIRECTRIZ ENUM-REGISTRY)
+
+**PROHIBIDO introducir un nuevo valor de ENUM/estado en el registro sin cumplir esta lista completa. Aplica a TODO campo ENUM de `FTCS_Groups_Registry_Table`, `FTCS_Platoons_Registry` y cualquier registro añadido en el futuro.**
+
+Antes de escribir por primera vez un valor nuevo (ej. un nuevo `movingMode`, `orderState`, `stance`, `awareMode`, `teamAttachment`, `movementType`...):
+
+1. **DOCUMENTAR AQUÍ, EN EL MISMO CAMBIO:** añadir el valor a la lista del campo correspondiente en este documento (secciones 3 y 3-bis), con su semántica, escritor único y consumidores.
+2. **SINCRONIZAR TODAS LAS LISTAS PARALELAS:** si el mismo enum se valida en más sitios (`init.sqf`, `fn_registryInit.sqf`, validadores de modo, menús de órdenes...), actualizarlos TODOS en el mismo cambio.
+3. **VERIFICAR CONSUMIDORES CON GREP ANTES DE ESCRIBIR:** un consumidor que compara contra la lista anterior (`movingMode == "HALT"`, `in [...]`) rompe el contrato en runtime con un valor nuevo. Grep del valor y de sus comparaciones es OBLIGATORIO.
+4. **REUTILIZAR ANTES QUE CREAR:** si existe un valor documentado con la semántica necesaria (ej. `"HALT"`), usarlo; inventar sinónimos (`"HALT_FREEZE"`) crea estados paralelos no reconocidos por los consumidores.
+5. **PROHIBIDO usar nombres doctrinales como identificadores:** el nombre doctrinal ("1st Rifle Squad", "Able Team (Scouts)") es SOLO representación histórica para el jugador. NUNCA debe usarse para indexar, buscar o comparar en código. Las claves internas son las del registro (`groupIds`, IDs `SQD_X_Y`, campos stampados como `parentSquadGroup`).
+
+---
+
+> **Referencia técnica formal y visual del modelo de datos de FTCS (secciones 1 a 6).**
 > Si se modifican, añaden o eliminan campos, tablas de hash o enumeraciones en el código backend (`FTCS_Company_Data`, `FTCS_Groups_Registry_Table`, plantillas doctrinales o registros auxiliares), **este documento debe ser actualizado obligatoriamente** para mantener sincronizada la fuente de verdad.
 
 ---
@@ -14,6 +32,39 @@ missionNamespace
 ├── FTCS_Config                     (HashMap: Parámetros de misión y doctrina activa)
 ├── FTCS_Company_Data               (HashMap: Árbol Jerárquico Táctico de Compañía - ORBAT)
 ├── FTCS_Groups_Registry_Table      (HashMap: Registro Plano de Estados y Físicas de Grupos)
+├── FTCS_Platoons_Registry          (HashMap: Estado por pelotón, clave NUMBER = ID pelotón)
+│     ├── "squads"          : ARRAY de GROUP (anclas de escuadra, sembradas por fn_registryInit)
+│     ├── "platoonGroup"    : GROUP  (grupo de mando del HQ de pelotón)
+│     ├── "orderState"      : "MARCH" | "HALTED" | "REJOINING"
+│     ├── "haltSnapshotLeaderPos" / "haltFacing" : snapshot de HALT
+│     ├── "leaderUnit"      : OBJECT (PLT_<N>_LEADER: jugador o IA; válido aunque esté FUERA de todo grupo)
+│     ├── "leaderGroup"     : GROUP  (grupo del teniente; grpNull si está desprendido)
+│     ├── "peerOnly"        : BOOLEAN (TRUE si el teniente NO está dentro de leaderGroup - modo jugador)
+│     │
+│     │  --- FASE 2: ESTADO DE PELOTÓN (antes solo en FTCS_Company_Data) ---
+│     ├── "currentPhase"     : SCALAR (0 = DEPLOYMENT/INSPECTION, 1 = APPROACH, 2 = OVERWATCH, 3 = COMBAT)
+│     │     Escritor: fn_platoonSetOperationalPhase vía FTCS_fnc_registrySetPlatoon.
+│     │     Se siembra desde la doctrina; global espejo: FTCS_Platoon_Phase_<N>.
+│     ├── "movementTechnique" : ENUM STRING "CROSS_COUNTRY" | "ROAD_COLUMN" | "TRAIL_FILE"
+│     │     Escritor: FTCS_fnc_registrySetPlatoon (espejo al árbol durante la migración)
+│     ├── "roadPath"         : ARRAY de [posATL, tangentDir, roadWidth] (polilínea activa)
+│     ├── "roadAnchor"       : HASHMAP (ancla de marcha por carretera del pelotón)
+│     ├── "trailAnchor"      : HASHMAP (ancla de columna de estela del pelotón)
+│     ├── "doctrineFormationSlots" : HASHMAP slotIdx (0..12) -> clave doctrinal (PLANTILLA)
+│     │     INMUTABLE. Se siembra UNA vez en fn_applyDoctrine desde la composición.
+│     │     Nunca se vuelve a escribir. Sirve para RESETEAR el mapa vivo a la doctrina
+│     │     (Fase 8 futura: "volver a la formación doctrinal").
+│     └── "formationSlots"   : HASHMAP slotIdx (0..12) -> clave doctrinal de squad/team
+│           VIVO / MUTABLE. Se siembra desde la plantilla al arrancar y se MODIFICA en
+│           runtime: scouts desprendidos (5/6/7/8/11/12), futura reordenación manual de
+│           escuadrones por el jugador, futura gestión de bajas.
+│           Se COPIA (+), no se referencia, para que las reasignaciones runtime no
+│           muten silenciosamente la plantilla inmutable.
+│           ÚNICO campo que leen los consumidores runtime (fn_formationsApplyPlatoonOrder).
+│
+│     >> FUENTE DE VERDAD: el registro. El árbol mantiene un ESPEJO temporal
+│        (mantenido por FTCS_fnc_registrySetPlatoon) hasta completar la Fase 3,
+│        en la que los consumidores dejarán de leer FTCS_Company_Data.
 ├── FTCS_Platoon_Phase_1 .. 4       (NUMBER: Fase operacional activa individual por pelotón: 1, 2 o 3)
 ├── FTCS_Platoon_Follow_Mode        (STRING: Modo de seguimiento activo: "FOLLOWING_COMMANDER_REL" | "FOLLOWING_COMMANDER_ABS")
 ├── FTCS_Platoon_Fixed_Abs_Dir      (NUMBER: Rumbo fijo congelado en brújula [0-360] para seguimiento y debug en modo absoluto)
@@ -144,25 +195,33 @@ FTCS_Groups_Registry_Table (HashMap)
 │
 └── [GroupID: STRING] (ej. "SQUAD_1_1_TEAM_1", "SQUAD_4_1_TEAM_1", "SQUAD_0_0")
       │
-      ├── "movingMode"        : ENUM STRING
-      │     Valores válidos:
-      │     ├── "AT_WILL"                 -> La IA decide su movimiento táctico libremente.
+      ├── "movingMode"        : ENUM STRING (Ver DIRECTRIZ ENUM-REGISTRY, sección 0)
+      │     Valores válidos (censo verificado contra escritores reales en código):
+      │     ├── "AT_WILL"                 -> La IA decide su movimiento táctico libremente. Default al spawn.
       │     ├── "FOLLOWING_COMMANDER_REL" -> Sigue al líder manteniendo rumbo y vector relativo.
       │     ├── "FOLLOWING_COMMANDER_ABS" -> Sigue al líder congelando la geometría absoluta del mapa.
-      │     ├── "HALT"                    -> Alto temporal manteniendo sector y cobertura.
-      │     ├── "STOP"                    -> Parada estricta (`doStop`, cero reubicación de IA).
-      │     └── "CONVOY"                  -> Marcha en convoy rodado detrás de un vehículo guía.
+      │     ├── "HALT"                    -> Alto temporal manteniendo sector y cobertura. VALOR CANÓNICO DE CONGELACIÓN: los bucles follow (fn_formationsGroupDoFollowCommander, fn_formationsGroupFollowRoad) lo aceptan en su condición while para seguir procesando sin reanclar. Único escritor autorizado: fn_platoonHaltRejoin (HALT). NO usar sinónimos.
+      │     ├── "STOP"                    -> Parada estricta (`doStop`, cero reubicación de IA). Escritores: fn_squadOrderApply, fn_formationsGroupListFollowCommander.
+      │     ├── "MOVING_TO_OBJECTIVE"     -> Marcha activa hacia punto objetivo (fn_mvTeamMarchLoop vivo). Escritores: fn_mvSquadAdvanceToPoint, fn_mvFormationShift.
+      │     ├── "HOLD_POSITION"           -> Anclado al mundo en posición fija (ADVANCE_DETACH_HOLD/DEFEND). Escritores: fn_mvTeamMarchLoop, fn_squadOrderApply (legado).
+      │     ├── "FOLLOWING_ROAD"          -> Marcha por carretera (fn_formationsGroupFollowRoad). Escritor: fn_formationsGroupFollowRoad / columnas de carretera.
+      │     ├── "FOLLOWING_TRAIL"         -> Columna de estela (fn_formationsGroupFollowTrail / fn_trailColumnSet).
+      │     ├── "SCOUT_DETACHED"          -> Scouts desplegados autónomos (fn_applyCommandToTarget, junto a teamAttachment DETACHED_FREE).
+      │     └── "CONVOY"                  -> Marcha en convoy rodado detrás de un vehículo guía (reservado).
+      │     NOTA HISTÓRICA (no usar): "HALT_FREEZE" fue introducido por fn_platoonHaltRejoin sin pasar por la directriz y quedó NO RECONOCIDO por los consumidores (bucles while comparando contra "HALT"). Documentado como lección: ver FTCS_Programming_Lessons.md.
       │
-      ├── "stance"            : ENUM STRING
+      ├── "stance"            : ENUM STRING (Ver DIRECTRIZ ENUM-REGISTRY, sección 0)
       │     Valores válidos:
-      │     ├── "AUTO"         -> La IA adapta su postura al fuego recibido.
+      │     ├── "AUTO"                -> La IA adapta su postura al fuego recibido.
+      │     ├── "AT_WILL"            -> Libre albedrío de postura (valor DEFAULT del registro: fn_registryInit). Semánticamente equivalente a AUTO pero escrito con nombre distinto — NO unificar sin revisar consumidores.
+      │     ├── "FOLLOWING_COMMANDER_STANCE" -> Copia la postura del teniente en cada tick (erguido/agachado/tendado). Escritor/consumidor: pipeline de stance por grupo. Estaba INDOCUMENTADO — añadido por censo de código real.
       │     ├── "FORCE_UP"     -> Obliga a mantenerse de pie (asalto rápido / carrera).
       │     ├── "FORCE_MIDDLE" -> Obliga a permanecer agachado (avance cauteloso).
       │     └── "FORCE_DOWN"   -> Obliga a permanecer cuerpo a tierra (cuerpo a cubierto).
       │
       ├── "awareMode"         : ENUM STRING (Comportamiento nativo de combate en Arma 3)
       │     Valores válidos:
-      │     └── "CARELESS" | "SAFE" | "AWARE" | "COMBAT" | "STEALTH" | "ASSAULT_ADVANCE" | "ROAD_MARCH" (perfil disciplinado de marcha por carretera: AWARE + COVER/AUTOTARGET deshabilitados)
+      │     └── "ROAD_MARCH" (perfil disciplinado de marcha por carretera: AWARE + COVER/AUTOTARGET deshabilitados; escritor: pipeline de carretera/trail). Escritor de los demás valores: FTCS_fnc_groupSetAwareMode.
       │
       ├── "speed"             : ENUM STRING
       │     Valores válidos:
@@ -210,10 +269,11 @@ n      │     squad). Persistente: solo una nueva orden de formación la sobres
       │     pueden diferir de las de SQF.
       │
       ├── "teamAttachment"    : ENUM STRING (Atribución del sub-equipo a su escuadra — Movement/Formations)
-      │     Valores válidos:
+      │     Valores válidos (censo verificado):
       │     ├── "SQUAD_BOUND"    -> Arrastrado por las órdenes de movimiento del squad (defecto).
       │     ├── "DETACHED_HOLD"  -> Desligado y fijo (MG emplazada, hold ordenado): ignora movimientos de squad.
-      │     └── "DETACHED_FREE"  -> Desligado autónomo (scouts desplegados): ignora movimientos de squad.
+      │     ├── "DETACHED_FREE"  -> Desligado autónomo (scouts desplegados): ignora movimientos de squad. Puede coexistir con movingMode "SCOUT_DETACHED".
+      │     └── "ADVANCE_DETACH_DEFEND" -> Punto de avance marcado: doMove al objetivo, desligarse y adoptar postura defensiva (fn_mvTeamMarchLoop / órdenes ADVANCE_DETACH_*).
       │
       ├── "movementType"      : ENUM STRING (Maniobra táctica activa del grupo/squad — Movement class)
       │     Valores válidos:
@@ -223,6 +283,57 @@ n      │     squad). Persistente: solo una nueva orden de formación la sobres
       │     └── "MOVING_OVERWATCH"    -> Avance con cobertura en movimiento (reservado).
       │     Escritura: al entrar en la maniobra (dispatcher de órdenes SQD_MOVE_* / primitivas fn_mv*).
       │     Limpieza: al terminar el bucle de marcha del team (fn_mvTeamMarchLoop) -> "NORMAL_MOVE".
+      │
+      ├── "platoonId"         : SCALAR (Número de pelotón: 1, 2, 3...; 0 = grupo suelto)
+      │     Identidad de pelotón por GRUPO. Sustituye el uso del global
+      │     FTCS_Player_Platoon_ID en runtime (company-scale safe, Punto 18).
+      │     Escritor único: fn_registryInit.
+      │
+      ├── "roleKey"           : STRING (Rol doctrinal de MAYOR RANGO presente en el grupo)
+      │     Valores: "PLT_<N>_LEADER", "SQD_<N>_<M>_LEADER", "SQD_<N>_0_LEADER",
+      │     o "" cuando ninguna unidad del grupo tiene rol doctrinal.
+      │     RESOLUCIÓN (fn_registryInit): se recorre assignedRoles (roleVar -> unit)
+      │     y se queda el rol cuya unidad PERTENECE a units _group, con prioridad:
+      │       PLT_<N>_LEADER = 100  >  *_LEADER = 80  >  *SERGEANT = 60  >  resto = 40
+      │     NO es `leader _group`: Arma 3 elige su propio líder de grupo (habilidad
+      │     de liderazgo / antigüedad), y un grupo de mando que contiene AL teniente
+      │     Y a su RTO resuelve habitualmente al RTO. Ejemplo real observado:
+      │     'HQ - 1st Platoon (Command Element)' con leader = RTO devolvía
+      │     "PLT_1_RADIO_OPERATOR" antes de aplicar la prioridad por rango.
+      │     Sustituye el matching por vehicleVarName (find "LEADER"/"find SQD_",
+      │     prohibido por Punto 18) SOLO en modo IA/compañía: en modo jugador los
+      │     consumidores deben seguir usando isPlayer / FTCS_Platoon_Leader_Unit.
+      │     Escritor único: fn_registryInit.
+      │
+      ├── "tacticalRole"      : STRING (Rol táctico doctrinal del team)
+      │     Valores censados: "ASSAULT" | "SCOUT" | "SUPPORT" | "HQ_ELEMENT" | "" 
+      │     Origen: doctrine template "teamRoles" -> fn_applyDoctrine -> parsedSquads
+      │     > team > "tacticalRole" -> fn_registryInit (este campo).
+      │     "SCOUT" marca el team que el pelotón puede desprender a un slot de
+      │     scouts (5/6/7/8/11/12). ÚNICO criterio autorizado para elegirlo:
+      │     nunca el nombre del team (Punto 18) ni el orden de un HashMap.
+      │     Escritor único: fn_registryInit. Consumidor: fn_applyCommandToTarget
+      │     (SQD_SCOUT_*), con fallback determinista TEAM_2 si no hay rol SCOUT.
+      │
+      ├── "squadId"           : STRING (Clave doctrinal del squad, ej. "SQD_1_1", "SQD_1_0")
+      │     Agrupa todos los grupos de una misma escuadra SIN recorrer el árbol doctrinal.
+      │     Escritor único: fn_registryInit (siembra). Consumidores: fn_platoonHaltRejoin
+      │     (split squad/fireteam), futuras primitivas de órdenes por escuadra.
+      │     Default: nil en grupos sueltos (no pertenecen a ninguna escuadra registrada).
+      │
+      ├── "isSquadLeaderGroup" : BOOLEAN
+      │     TRUE solo en el grupo que porta al Squad Leader (grupo-ancla de la escuadra).
+      │     Resolución determinista en fn_registryInit: squad unificado -> su grupo;
+      │     multi-team -> team de tipo doctrinal TEAM_1/COMMAND; fallback -> team cuyo
+      │     leader es el "leader" del squad; fallback HQ -> team GUIDE/SECURITY.
+      │     NUNCA se resuelve por orden de iteración de HashMap (orden no determinista).
+      │     Escritor único: fn_registryInit. Consumidores: fn_platoonHaltRejoin.
+      │     Default: false en grupos sueltos y en fireteams.
+      │
+      ├── "parentSquadGroup"  : GROUP (referencia al grupo-ancla de la escuadra)
+      │     Auto-referencia (el propio grupo) cuando isSquadLeaderGroup == true.
+      │     Escritor: fn_registryInit. Consumidor: fn_platoonHaltRejoin (los fireteams
+      │     siguen al leader del ancla), fn_formationsTypeSquadSet (herencia de formación).
       │
       ├── "allocationSlot"    : SCALAR (Entero: 0, 1, 2, 3...)
       │     Índice de ranura geométrica dentro de la formación de su pelotón/escuadra.

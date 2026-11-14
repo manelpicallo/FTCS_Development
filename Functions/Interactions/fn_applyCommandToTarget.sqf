@@ -48,34 +48,40 @@ private _targetName = if (!isNull _targetUnit) then { name _targetUnit } else { 
 private _crosshairPos = missionNamespace getVariable ["FTCS_ActiveMenu_Pos", screenToWorld [0.5, 0.5]];
 private _crosshairObj = missionNamespace getVariable ["FTCS_ActiveMenu_CursorObject", cursorObject];
 
-// Helper to retrieve specific platoon squad group and its actual leader unit
+// Helper to retrieve specific platoon squad group and its actual leader unit.
+// PHASE 5: squad RESOLUTION comes from the registry (RULE 16).
+//   "squadId"            -> which squad a group belongs to
+//   "isSquadLeaderGroup" -> the ONE group carrying the Squad Leader
+// The doctrine tree is still read for the squad DISPLAY NAME only (UI caption;
+// Point 18 forbids it as an identifier, not as a label).
+// Return contract unchanged: [_sqdGroup, _sqdLeader, _sqdName, _sqdKey].
 private _fnc_getPlatoonSquadInfo = {
     params ["_squadSuffix"];
     private _pltId = missionNamespace getVariable ["FTCS_Player_Platoon_ID", 1];
-    private _pltKey = format ["PLT_%1", _pltId];
-    private _platoonsMap = FTCS_Company_Data getOrDefault ["platoons", createHashMap];
-    private _pltData = _platoonsMap getOrDefault [_pltKey, createHashMap];
-    private _parsedSquads = _pltData getOrDefault ["parsedSquads", createHashMap];
     private _sqdKey = format ["SQD_%1_%2", _pltId, _squadSuffix];
-    private _sData = _parsedSquads getOrDefault [_sqdKey, createHashMap];
 
-    private _sqdGroup = _sData getOrDefault ["group", grpNull];
-    private _sqdLeader = _sData getOrDefault ["leader", objNull];
-    private _sqdName = _sData getOrDefault ["name", format ["Squad %1", _squadSuffix]];
+    // Resolve the squad anchor (group carrying the Squad Leader) from the registry.
+    // `exitWith` inside forEach only leaves the CURRENT iteration, so the loop is
+    // guarded by `isNull _sqdGroup` instead: once found, further hits are ignored.
+    private _sqdGroup = grpNull;
+    private _liveMap = createHashMap;
+    { if (!isNull _x) then { _liveMap set [groupId _x, _x]; }; } forEach allGroups;
+    {
+        if (isNull _sqdGroup) then {
+            private _gEntry = _y;
+            if ((_gEntry getOrDefault ["squadId", ""]) isEqualTo _sqdKey
+                && { _gEntry getOrDefault ["isSquadLeaderGroup", false] }) then {
+                _sqdGroup = _liveMap getOrDefault [_x, grpNull];
+            };
+        };
+    } forEach FTCS_Groups_Registry_Table;
 
-    // If multi-team squad, resolve Team 1 group and leader
-    private _teams = _sData getOrDefault ["tacticalTeams", createHashMap];
-    private _tKeys = keys _teams;
-    _tKeys sort true;
-    if (count _tKeys > 0) then {
-        private _t1 = _teams get (_tKeys select 0);
-        if (isNull _sqdLeader) then { _sqdLeader = _t1 getOrDefault ["leader", objNull]; };
-        if (isNull _sqdGroup) then { _sqdGroup = _t1 getOrDefault ["group", grpNull]; };
-    };
+    private _sqdLeader = if (!isNull _sqdGroup) then { leader _sqdGroup } else { objNull };
 
-    if (isNull _sqdLeader && {!isNull _sqdGroup}) then {
-        _sqdLeader = leader _sqdGroup;
-    };
+    // Display name: UI caption only (Point 18 allows it as a label)
+    private _pltKeyN = format ["PLT_%1", _pltId];
+    private _parsedSquadsN = ((FTCS_Company_Data getOrDefault ["platoons", createHashMap]) getOrDefault [_pltKeyN, createHashMap]) getOrDefault ["parsedSquads", createHashMap];
+    private _sqdName = (_parsedSquadsN getOrDefault [_sqdKey, createHashMap]) getOrDefault ["name", format ["Squad %1", _squadSuffix]];
 
     [_sqdGroup, _sqdLeader, _sqdName, _sqdKey]
 };
@@ -86,58 +92,34 @@ private _fnc_getPlatoonSquad = {
     ([_squadSuffix] call _fnc_getPlatoonSquadInfo) select 0
 };
 
-// Helper to retrieve all subordinate groups & fireteams in current platoon
+// Helper to retrieve all subordinate groups & fireteams in current platoon.
+// PHASE 5: one registry pass by "platoonId" (RULE 16) replaces the two nested
+// loops over parsedSquads > tacticalTeams. Includes HQ sub-teams, combat squads
+// and every fireteam of the platoon, excluding the player's own group.
 private _fnc_getAllPlatoonSquads = {
     private _pltId = missionNamespace getVariable ["FTCS_Player_Platoon_ID", 1];
-    private _pltKey = format ["PLT_%1", _pltId];
-    private _platoonsMap = FTCS_Company_Data getOrDefault ["platoons", createHashMap];
-    private _pltData = _platoonsMap getOrDefault [_pltKey, createHashMap];
-    private _parsedSquads = _pltData getOrDefault ["parsedSquads", createHashMap];
+    private _playerGrp = group player;
     private _result = [];
+    private _liveMap = createHashMap;
+    { if (!isNull _x) then { _liveMap set [groupId _x, _x]; }; } forEach allGroups;
     {
-        private _sqdKey = _x;
-        private _sqdData = _y;
-
-        // Platoon HQ sub-teams
-        if (_sqdKey find "_0" >= 0) then {
-            private _tacticalTeams = _sqdData getOrDefault ["tacticalTeams", createHashMap];
-            {
-                private _tGrp = _y getOrDefault ["group", grpNull];
-                if (!isNull _tGrp && {_tGrp != group player} && {!(_tGrp in _result)}) then {
-                    _result pushBack _tGrp;
-                };
-            } forEach _tacticalTeams;
-        } else {
-            // Combat squads and fireteams
-            private _tacticalTeams = _sqdData getOrDefault ["tacticalTeams", createHashMap];
-            if (count _tacticalTeams > 0) then {
-                private _tKeys = keys _tacticalTeams;
-                _tKeys sort true;
-                {
-                    private _tGrp = (_tacticalTeams get _x) getOrDefault ["group", grpNull];
-                    if (!isNull _tGrp && {!(_tGrp in _result)}) then { _result pushBack _tGrp; };
-                } forEach _tKeys;
-            } else {
-                private _grp = _sqdData getOrDefault ["group", grpNull];
-                if (!isNull _grp && {!(_grp in _result)}) then { _result pushBack _grp; };
-            };
+        private _gEntry = _y;
+        if ((_gEntry getOrDefault ["platoonId", -1]) == _pltId) then {
+            private _g = _liveMap getOrDefault [_x, grpNull];
+            if (!isNull _g && { _g != _playerGrp } && { !(_g in _result) }) then { _result pushBack _g; };
         };
-    } forEach _parsedSquads;
+    } forEach FTCS_Groups_Registry_Table;
     _result
 };
 
-// Helper to retrieve the actual platoon leader unit (player or NPC lieutenant)
+// Helper to retrieve the actual platoon leader unit (player or NPC lieutenant).
+// PHASE 8b: the commander is read from the PLATOON REGISTRY entry
+// ("leaderUnit", seeded by fn_registryInit from the doctrine PLT_<N>_LEADER
+// role) instead of walking parsedSquads > assignedRoles at runtime (RULE 16).
 private _fnc_getPlatoonLeaderUnit = {
     private _pltId = missionNamespace getVariable ["FTCS_Player_Platoon_ID", 1];
-    private _pltKey = format ["PLT_%1", _pltId];
-    private _platoonsMap = FTCS_Company_Data getOrDefault ["platoons", createHashMap];
-    private _pltData = _platoonsMap getOrDefault [_pltKey, createHashMap];
-    private _parsedSquads = _pltData getOrDefault ["parsedSquads", createHashMap];
-    private _hqSquadId = format ["SQD_%1_0", _pltId];
-    private _hqData = _parsedSquads getOrDefault [_hqSquadId, createHashMap];
-    private _roles = _hqData getOrDefault ["assignedRoles", createHashMap];
-    private _pltLeaderRole = format ["PLT_%1_LEADER", _pltId];
-    private _leader = _roles getOrDefault [_pltLeaderRole, objNull];
+    private _pltReg = (missionNamespace getVariable ["FTCS_Platoons_Registry", createHashMap]) getOrDefault [_pltId, createHashMap];
+    private _leader = _pltReg getOrDefault ["leaderUnit", objNull];
     if (isNull _leader) then {
         _leader = missionNamespace getVariable ["FTCS_Platoon_Leader_Unit", objNull];
     };
@@ -220,32 +202,13 @@ switch (_commandCode) do {
             default { "1" };
         };
 
-        private _pltId = missionNamespace getVariable ["FTCS_Player_Platoon_ID", 1];
-        private _pltKey = format ["PLT_%1", _pltId];
-        private _platoonsMap = FTCS_Company_Data getOrDefault ["platoons", createHashMap];
-        private _pltData = _platoonsMap getOrDefault [_pltKey, createHashMap];
-        private _parsedSquads = _pltData getOrDefault ["parsedSquads", createHashMap];
-        private _sqdKey = format ["SQD_%1_%2", _pltId, _sqdNum];
-        private _sData = _parsedSquads getOrDefault [_sqdKey, createHashMap];
-
-        private _targetSqdGroup = _sData getOrDefault ["group", grpNull];
-        private _targetSqdLeader = _sData getOrDefault ["leader", objNull];
-        private _targetSqdName = _sData getOrDefault ["name", format ["Squad %1", _sqdNum]];
-
-        // Fallback to Team 1 leader if multi-team squad
-        if (isNull _targetSqdLeader) then {
-            private _teams = _sData getOrDefault ["tacticalTeams", createHashMap];
-            private _tKeys = keys _teams;
-            _tKeys sort true;
-            if (count _tKeys > 0) then {
-                private _t1 = _teams get (_tKeys select 0);
-                _targetSqdLeader = _t1 getOrDefault ["leader", objNull];
-                if (isNull _targetSqdGroup) then { _targetSqdGroup = _t1 getOrDefault ["group", grpNull]; };
-            };
-        };
-        if (isNull _targetSqdLeader && {!isNull _targetSqdGroup}) then {
-            _targetSqdLeader = leader _targetSqdGroup;
-        };
+        // PHASE 8b: the squad is resolved through the shared registry helper
+        // (squadId + isSquadLeaderGroup) instead of walking parsedSquads.
+        // The helper returns [_sqdGroup, _sqdLeader, _sqdName, _sqdKey].
+        private _sqdInfo = [_sqdNum] call _fnc_getPlatoonSquadInfo;
+        private _targetSqdGroup = _sqdInfo select 0;
+        private _targetSqdLeader = _sqdInfo select 1;
+        private _targetSqdName = _sqdInfo select 2;
 
         if (!isNull _targetSqdLeader) then {
             // Set active menu context to the selected squad leader and open its squad menu after commandingMenu closes
@@ -370,9 +333,14 @@ switch (_commandCode) do {
         private _okH = ["HALT"] call FTCS_fnc_platoonHaltRejoin;
         systemChat format ["[PLATOON ORDER] %1", if (_okH) then {"HALT - platoon frozen in place, lieutenant free to explore."} else {"HALT refused."}];
     };
+    case "PLT_REJOIN_KEEP";
+    case "PLT_REJOIN_NEW";
     case "PLT_REJOIN": {
-        private _okR = ["REJOIN"] call FTCS_fnc_platoonHaltRejoin;
-        systemChat format ["[PLATOON ORDER] %1", if (_okR) then {"REJOIN - squads converging on the lieutenant."} else {"REJOIN refused (platoon must be HALTED)."}];
+        // KEEP: converge preserving the platoon axis frozen at HALT (haltFacing).
+        // NEW: rotate the frozen geometry onto the lieutenant's CURRENT axis.
+        private _facingMode = [0, 1] select (_commandCode == "PLT_REJOIN_NEW");
+        private _okR = ["REJOIN", -1, _facingMode] call FTCS_fnc_platoonHaltRejoin;
+        systemChat format ["[PLATOON ORDER] %1", if (_okR) then {format ["REJOIN (%1) - squads converging on the lieutenant.", ["KEEP_FACING", "NEW_FACING"] select _facingMode]} else {"REJOIN refused (platoon must be HALTED)."}];
     };
 
     case "PLT_MODE_RELATIVE": {
@@ -394,20 +362,18 @@ switch (_commandCode) do {
         // of the platoon regardless of whether the capture above managed to collect
         // them. Stale ABS threads surviving a failed/aborted capture path would keep
         // steering by fixed compass while the mode variable already says RELATIVE.
-        // Collection source: parsedSquads (authoritative "group" references), NOT the
-        // registry (whose entries are keyed by groupId without the group object).
-        private _parsedSquads = _pltData getOrDefault ["parsedSquads", createHashMap];
+        // Collection source (PHASE 8b): the PLATOON REGISTRY by "platoonId".
+        // Every group of this platoon - HQ sub-teams, squads and fireteams - is
+        // resolved in ONE pass; the live group object comes from allGroups.
         private _relGroups = [];
+        private _liveMapRel = createHashMap;
+        { if (!isNull _x) then { _liveMapRel set [groupId _x, _x]; }; } forEach allGroups;
         {
-            private _sData = _y;
-            private _tacticalTeams = _sData getOrDefault ["tacticalTeams", createHashMap];
-            private _sqdGroup = _sData getOrDefault ["group", grpNull];
-            if (count _tacticalTeams > 0) then {
-                { private _g = (_tacticalTeams get _x) getOrDefault ["group", grpNull]; if (!isNull _g) then { _relGroups pushBack _g; }; } forEach _tacticalTeams;
-            } else {
-                if (!isNull _sqdGroup) then { _relGroups pushBack _sqdGroup; };
+            if (((_y) getOrDefault ["platoonId", -1]) == _pltId) then {
+                private _g = _liveMapRel getOrDefault [_x, grpNull];
+                if (!isNull _g) then { _relGroups pushBack _g; };
             };
-        } forEach _parsedSquads;
+        } forEach FTCS_Groups_Registry_Table;
         [_relGroups, "FOLLOWING_COMMANDER_REL"] spawn FTCS_fnc_formationsGroupListFollowCommander;
 
         systemChat "[FOLLOW MODE] Platoon follow mode set to RELATIVE (Turn with Leader). Current ground layout locked.";
@@ -431,16 +397,14 @@ switch (_commandCode) do {
 
         // RELIABILITY SWEEP: same guarantee as the RELATIVE switch (see above)
         private _absGroups = [];
+        private _liveMapAbs = createHashMap;
+        { if (!isNull _x) then { _liveMapAbs set [groupId _x, _x]; }; } forEach allGroups;
         {
-            private _sData = _y;
-            private _tacticalTeams = _sData getOrDefault ["tacticalTeams", createHashMap];
-            private _sqdGroup = _sData getOrDefault ["group", grpNull];
-            if (count _tacticalTeams > 0) then {
-                { private _g = (_tacticalTeams get _x) getOrDefault ["group", grpNull]; if (!isNull _g) then { _absGroups pushBack _g; }; } forEach _tacticalTeams;
-            } else {
-                if (!isNull _sqdGroup) then { _absGroups pushBack _sqdGroup; };
+            if (((_y) getOrDefault ["platoonId", -1]) == _pltId) then {
+                private _g = _liveMapAbs getOrDefault [_x, grpNull];
+                if (!isNull _g) then { _absGroups pushBack _g; };
             };
-        } forEach _parsedSquads;
+        } forEach FTCS_Groups_Registry_Table;
         [_absGroups, "FOLLOWING_COMMANDER_ABS"] spawn FTCS_fnc_formationsGroupListFollowCommander;
 
         systemChat "[FOLLOW MODE] Platoon follow mode set to ABSOLUTE (Fixed Compass). Current ground layout locked.";
@@ -500,12 +464,13 @@ switch (_commandCode) do {
         missionNamespace setVariable ["FTCS_Platoon_Advance_Direction", _roadDir];
         missionNamespace setVariable ["FTCS_Last_Commander_Dir", _roadDir];
 
-        // Gather all subordinate platoon elements structured for macro slots
+        // Gather all subordinate platoon elements structured for macro slots.
+        // PHASE 8b: identity comes from the registry; `_pltData` is kept only
+        // for the historical `_platoonsMap set` write-backs further below.
         private _pltId = missionNamespace getVariable ["FTCS_Player_Platoon_ID", 1];
         private _pltKey = format ["PLT_%1", _pltId];
         private _platoonsMap = FTCS_Company_Data getOrDefault ["platoons", createHashMap];
         private _pltData = _platoonsMap getOrDefault [_pltKey, createHashMap];
-        private _parsedSquads = _pltData getOrDefault ["parsedSquads", createHashMap];
         private _leaderGroup = group _ldr;
 
         // Collect elements identical to macro slot hierarchy
@@ -523,54 +488,46 @@ switch (_commandCode) do {
             private _sIdx = _x;
             if (_sIdx in [5, 6, 7, 8, 11, 12]) then { _formationSlotsMap deleteAt _sIdx; };
         } forEach (keys _formationSlotsMap);
-        _pltData set ["formationSlots", _formationSlotsMap];
+        // PHASE 3: registry-first write through the platoon accessor
+        [_pltId, "formationSlots", _formationSlotsMap] call FTCS_fnc_registrySetPlatoon;
 
+        // PHASE 8b: rebuild the slot element map from the REGISTRY (RULE 16).
+        // One pass groups every platoon group by its "squadId", which yields the
+        // same structure the doctrine tree used to provide, plus the HQ element
+        // detected by "roleKey" on the team (TEAM_1/2/3 -> slots 9/4/10).
         private _squadElementsMap = createHashMap;
-
+        private _liveMapSlot = createHashMap;
+        { if (!isNull _x) then { _liveMapSlot set [groupId _x, _x]; }; } forEach allGroups;
         {
-            private _sqdKey = _x;
-            private _sData = _y;
-            private _tacticalTeams = _sData getOrDefault ["tacticalTeams", createHashMap];
-            private _sqdGroup = _sData getOrDefault ["group", grpNull];
-
-            if (_sqdKey find "_0" >= 0) then {
-                // HQ sub-teams
-                {
-                    private _tKey = toUpper _x;
-                    private _hGrp = (_y) getOrDefault ["group", grpNull];
-                    if (!isNull _hGrp && {_hGrp != _leaderGroup}) then {
-                        _squadElementsMap set [_x, [_hGrp]];
-                        if (_tKey find "TEAM_1" >= 0) then { _slottedElements set [9, [_hGrp]]; };
-                        if (_tKey find "TEAM_2" >= 0) then { _slottedElements set [4, [_hGrp]]; };
-                        if (_tKey find "TEAM_3" >= 0) then { _slottedElements set [10, [_hGrp]]; };
+            private _gEntry = _y;
+            if (((_gEntry getOrDefault ["platoonId", -1]) == _pltId)) then {
+                private _sqdKey = _gEntry getOrDefault ["squadId", ""];
+                if (_sqdKey != "") then {
+                    private _grp = _liveMapSlot getOrDefault [_x, grpNull];
+                    if (!isNull _grp && { _grp != _leaderGroup }) then {
+                        private _bucket = _squadElementsMap getOrDefault [_sqdKey, []];
+                        _bucket pushBack _grp;
+                        _squadElementsMap set [_sqdKey, _bucket];
                     };
-                } forEach _tacticalTeams;
-            } else {
-                // Combat squads
-                private _elementGroups = [];
-                if (count _tacticalTeams > 0) then {
-                    private _tKeys = keys _tacticalTeams;
-                    _tKeys sort true;
-                    {
-                        private _tGrp = (_tacticalTeams get _x) getOrDefault ["group", grpNull];
-                        if (!isNull _tGrp) then {
-                            _elementGroups pushBack _tGrp;
-                            _squadElementsMap set [_x, [_tGrp]];
-                        };
-                    } forEach _tKeys;
-                } else {
-                    if (!isNull _sqdGroup) then { _elementGroups pushBack _sqdGroup; };
-                };
-                if (count _elementGroups > 0) then {
-                    _squadElementsMap set [_sqdKey, _elementGroups];
-                    // Default slot assignments: S1 -> Slot 0, S2 -> Slot 1, S3 -> Slot 2, S4 -> Slot 3
-                    if (_sqdKey select [count _sqdKey - 2] == "_1") then { _slottedElements set [0, _elementGroups]; };
-                    if (_sqdKey select [count _sqdKey - 2] == "_2") then { _slottedElements set [1, _elementGroups]; };
-                    if (_sqdKey select [count _sqdKey - 2] == "_3") then { _slottedElements set [2, _elementGroups]; };
-                    if (_sqdKey select [count _sqdKey - 2] == "_4") then { _slottedElements set [3, _elementGroups]; };
                 };
             };
-        } forEach _parsedSquads;
+        } forEach FTCS_Groups_Registry_Table;
+
+        // HQ element slots: Support -> 4, Command -> 9, Guide -> 10 (doctrine
+        // order). Resolved from the HQ squad's own group list, never by name.
+        private _hqBucket = _squadElementsMap getOrDefault [format ["SQD_%1_0", _pltId], []];
+        if (count _hqBucket >= 1) then { _slottedElements set [9, [_hqBucket select 0]]; };
+        if (count _hqBucket >= 2) then { _slottedElements set [4, [_hqBucket select 1]]; };
+        if (count _hqBucket >= 3) then { _slottedElements set [10, [_hqBucket select 2]]; };
+
+        // Default combat-squad slots: SQD_X_1..4 -> slots 0..3
+        {
+            private _sqdIdx = _x;
+            private _key = format ["SQD_%1_%2", _pltId, _sqdIdx];
+            if (_key in _squadElementsMap) then {
+                _slottedElements set [(_sqdIdx - 1), (_squadElementsMap get _key)];
+            };
+        } forEach [1, 2, 3, 4];
 
         // Apply pre-configured formation slots from doctrine if defined
         {
@@ -587,9 +544,10 @@ switch (_commandCode) do {
         private _formationElements = [[_leaderGroup]] + _slottedElements;
 
         // Persist structured state into this platoon's Data-Driven model (encapsulated for multi-platoon)
-        _pltData set ["movementTechnique", "ROAD_COLUMN"];
-        _pltData set ["roadPath", _roadPath];
-        _pltData set ["roadAnchor", _anchor];
+        // PHASE 3: registry-first writes through the platoon accessor
+        [_pltId, "movementTechnique", "ROAD_COLUMN"] call FTCS_fnc_registrySetPlatoon;
+        [_pltId, "roadPath", _roadPath] call FTCS_fnc_registrySetPlatoon;
+        [_pltId, "roadAnchor", _anchor] call FTCS_fnc_registrySetPlatoon;
         _platoonsMap set [_pltKey, _pltData];
 
         // Invalidate every squad's marked 3D target: a new movement technique
@@ -756,20 +714,17 @@ switch (_commandCode) do {
         private _pltId = _pltIdT;
         private _pltKey = format ["PLT_%1", _pltId];
         private _platoonsMap = FTCS_Company_Data getOrDefault ["platoons", createHashMap];
-        private _pltData = _platoonsMap getOrDefault [_pltKey, createHashMap];
-        private _parsedSquads = _pltData getOrDefault ["parsedSquads", createHashMap];
 
+        // PHASE 8b: subordinate groups by platoonId from the registry (RULE 16)
         private _trailGroups = [];
+        private _liveMapTrail = createHashMap;
+        { if (!isNull _x) then { _liveMapTrail set [groupId _x, _x]; }; } forEach allGroups;
         {
-            private _sData = _y;
-            private _tacticalTeams = _sData getOrDefault ["tacticalTeams", createHashMap];
-            private _sqdGroup = _sData getOrDefault ["group", grpNull];
-            if (count _tacticalTeams > 0) then {
-                { private _g = (_tacticalTeams get _x) getOrDefault ["group", grpNull]; if (!isNull _g) then { _trailGroups pushBack _g; }; } forEach _tacticalTeams;
-            } else {
-                if (!isNull _sqdGroup) then { _trailGroups pushBack _sqdGroup; };
+            if (((_y) getOrDefault ["platoonId", -1]) == _pltId) then {
+                private _g = _liveMapTrail getOrDefault [_x, grpNull];
+                if (!isNull _g && { _g != group _ldrT }) then { _trailGroups pushBack _g; };
             };
-        } forEach _parsedSquads;
+        } forEach FTCS_Groups_Registry_Table;
 
         // Freeze the trail anchor and assign chained offsets
         private _chainedCount = [_pltIdT, _trailGroups, _ldrT] call FTCS_fnc_trailColumnSet;
@@ -781,8 +736,9 @@ switch (_commandCode) do {
         private _anchorT = missionNamespace getVariable [format ["FTCS_Trail_Anchor_PLT_%1", _pltIdT], createHashMap];
 
         // Persist in the platoon data-driven model
-        _pltData set ["movementTechnique", "TRAIL_COLUMN"];
-        _pltData set ["trailAnchor", _anchorT];
+        // PHASE 3: registry-first writes through the platoon accessor
+        [_pltIdT, "movementTechnique", "TRAIL_COLUMN"] call FTCS_fnc_registrySetPlatoon;
+        [_pltIdT, "trailAnchor", _anchorT] call FTCS_fnc_registrySetPlatoon;
         _platoonsMap set [_pltKey, _pltData];
 
         // Awaken AI and configure the SAME doctrinal march profile as road march
@@ -1003,53 +959,25 @@ switch (_commandCode) do {
         if (!isNull _targetGroup) then {
             private _tGrpId = groupId _targetGroup;
 
-            // 1. Resolve platoon and squad key
+            // 1. Resolve the squad identity of targetGroup from the REGISTRY
+            // (PHASE 8b): "squadId" tells which squad owns it, and every group
+            // sharing that id is a squad element (teams included).
             private _pltId = missionNamespace getVariable ["FTCS_Player_Platoon_ID", 1];
-            private _pltKey = format ["PLT_%1", _pltId];
-            private _platoonsMap = FTCS_Company_Data getOrDefault ["platoons", createHashMap];
-            private _pltData = _platoonsMap getOrDefault [_pltKey, createHashMap];
-            private _parsedSquads = _pltData getOrDefault ["parsedSquads", createHashMap];
-
-            // Locate squad entry corresponding to targetGroup
-            private _targetSquadData = createHashMap;
-            private _targetSquadId = "";
-            {
-                private _sId = _x;
-                private _sData = _y;
-                private _grp = _sData getOrDefault ["group", grpNull];
-                private _teams = _sData getOrDefault ["tacticalTeams", createHashMap];
-
-                if (_grp == _targetGroup) exitWith {
-                    _targetSquadData = _sData;
-                    _targetSquadId = _sId;
-                };
-
-                private _foundTeam = false;
-                {
-                    if ((_y getOrDefault ["group", grpNull]) == _targetGroup) exitWith {
-                        _foundTeam = true;
-                    };
-                } forEach _teams;
-
-                if (_foundTeam) exitWith {
-                    _targetSquadData = _sData;
-                    _targetSquadId = _sId;
-                };
-            } forEach _parsedSquads;
+            private _targetSquadId = (FTCS_Groups_Registry_Table getOrDefault [_tGrpId, createHashMap]) getOrDefault ["squadId", ""];
 
             // 2. Gather squad elements (Team 1, 2, 3, 4) or unified group
             private _squadElements = [];
-            private _tacticalTeams = _targetSquadData getOrDefault ["tacticalTeams", createHashMap];
-            if (count _tacticalTeams > 0) then {
-                private _teamKeys = keys _tacticalTeams;
-                _teamKeys sort true;
+            private _liveMapSqd = createHashMap;
+            { if (!isNull _x) then { _liveMapSqd set [groupId _x, _x]; }; } forEach allGroups;
+            if (_targetSquadId != "") then {
                 {
-                    private _tGrp = (_tacticalTeams get _x) getOrDefault ["group", grpNull];
-                    if (!isNull _tGrp) then { _squadElements pushBack _tGrp; };
-                } forEach _teamKeys;
+                    if (((_y) getOrDefault ["squadId", ""]) isEqualTo _targetSquadId) then {
+                        private _g = _liveMapSqd getOrDefault [_x, grpNull];
+                        if (!isNull _g) then { _squadElements pushBack _g; };
+                    };
+                } forEach FTCS_Groups_Registry_Table;
             } else {
-                private _grp = _targetSquadData getOrDefault ["group", _targetGroup];
-                if (!isNull _grp) then { _squadElements pushBack _grp; };
+                if (!isNull _targetGroup) then { _squadElements pushBack _targetGroup; };
             };
 
             // 3. Persist manual formation choice into registry (squad level; the
@@ -1103,35 +1031,29 @@ switch (_commandCode) do {
                 private _sIdxT = _x;
                 if (_sIdxT in [5, 6, 7, 8, 11, 12]) then { _formationSlotsMap deleteAt _sIdxT; };
             } forEach (keys _formationSlotsMap);
-            _pltData set ["formationSlots", _formationSlotsMap];
-            private _parsedSquads = _pltData getOrDefault ["parsedSquads", createHashMap];
+            // PHASE 3: registry-first write through the platoon accessor
+            [_pltIdT, "formationSlots", _formationSlotsMap] call FTCS_fnc_registrySetPlatoon;
+            // 1. Identify which squad this targetGroup belongs to (PHASE 8b):
+            // the registry already stamps "squadId" on every group.
+            private _targetSquadId = if (!isNull _targetGroup) then {
+                (FTCS_Groups_Registry_Table getOrDefault [groupId _targetGroup, createHashMap]) getOrDefault ["squadId", ""]
+            } else { "" };
 
-            // 1. Identify which squad this targetGroup belongs to
-            private _targetSquadData = createHashMap;
-            private _targetSquadId = "";
+            // 2. Check if any detached outer slot (5, 6, 7, 8, 11, 12) belongs to this squad.
+            // PHASE 8b: the squad's groups come from the REGISTRY (by "squadId"),
+            // so slots whose mapped key matches one of them are the scout slots.
+            private _liveMapRS = createHashMap;
+            { if (!isNull _x) then { _liveMapRS set [groupId _x, _x]; }; } forEach allGroups;
+            private _squadGroupIds = [];
             {
-                private _sId = _x;
-                private _sData = _y;
-                private _grp = _sData getOrDefault ["group", grpNull];
-                private _teams = _sData getOrDefault ["tacticalTeams", createHashMap];
-                if (_grp == _targetGroup) exitWith { _targetSquadData = _sData; _targetSquadId = _sId; };
-                {
-                    if ((_y getOrDefault ["group", grpNull]) == _targetGroup) exitWith {
-                        _targetSquadData = _sData;
-                        _targetSquadId = _sId;
-                    };
-                } forEach _teams;
-                if (_targetSquadId != "") exitWith {};
-            } forEach _parsedSquads;
-
-            // 2. Check if any detached outer slot (5, 6, 7, 8, 11, 12) belongs to this squad
-            private _tacticalTeams = _targetSquadData getOrDefault ["tacticalTeams", createHashMap];
+                if (((_y) getOrDefault ["squadId", ""]) isEqualTo _targetSquadId) then { _squadGroupIds pushBack _x; };
+            } forEach FTCS_Groups_Registry_Table;
             private _slotsToRemove = [];
             {
                 private _sIdx = _x;
                 private _tKey = _y;
                 if (_sIdx in [5, 6, 7, 8, 11, 12]) then {
-                    if (_tKey in _tacticalTeams || (_targetSquadId != "" && {_tKey find _targetSquadId == 0})) then {
+                    if ((_tKey in _squadGroupIds) || (_targetSquadId != "" && {_tKey find _targetSquadId == 0})) then {
                         _slotsToRemove pushBack _sIdx;
                     };
                 };
@@ -1147,28 +1069,49 @@ switch (_commandCode) do {
                         (Platoon_Formation_Position_List select _x) set [2, grpNull];
                     };
                 } forEach _slotsToRemove;
-                _pltData set ["formationSlots", _formationSlotsMap];
+                // PHASE 3: registry-first write through the platoon accessor
+                [_pltId, "formationSlots", _formationSlotsMap] call FTCS_fnc_registrySetPlatoon;
 
-                // 3. Rejoin strictly at the squad's CURRENT real-world position without re-triggering platoon formation
-                // Restore the SQUAD_BOUND attachment on every recovered scout team
-                // (mirror of the DETACHED_FREE set at deployment)
+                // 3. Rejoin strictly at the squad's CURRENT real-world position without re-triggering platoon formation.
+                // FULL state reset for every group of this squad: restoring ONLY the
+                // attachment leaves the scout with a stale "allocationSlot" (11...)
+                // and a possibly cleared parentSquadGroup - the HALT/REJOIN gather
+                // then classifies it as a squad-level element and anchors it to the
+                // lieutenant instead of to its own squad (reported bug).
+                private _anchorGrpRS = grpNull;
                 {
-                    private _tKey = _x;
-                    if (_tKey in _tacticalTeams) then {
-                        private _tGrp = (_tacticalTeams get _tKey) getOrDefault ["group", grpNull];
-                        if (!isNull _tGrp) then {
-                            [groupId _tGrp, "teamAttachment", "SQUAD_BOUND"] call FTCS_fnc_registrySet;
+                    if (((_y) getOrDefault ["squadId", ""]) isEqualTo _targetSquadId
+                        && { ((_y) getOrDefault ["isSquadLeaderGroup", false]) }) then {
+                        _anchorGrpRS = _liveMapRS getOrDefault [_x, grpNull];
+                    };
+                } forEach FTCS_Groups_Registry_Table;
+                {
+                    private _gR = _liveMapRS getOrDefault [_x, grpNull];
+                    if (!isNull _gR) then {
+                        private _isAnchorR = (_gR == _anchorGrpRS);
+                        [_x, "teamAttachment", "SQUAD_BOUND"] call FTCS_fnc_registrySet;
+                        [_x, "movingMode", "FOLLOWING_COMMANDER_REL"] call FTCS_fnc_registrySet;
+                        // Slot cleared: the group lives inside its squad formation again
+                        // (no platoon slot = -1; otherwise HALT/REJOIN would classify it
+                        // as a detached scout and anchor it to the lieutenant)
+                        [_x, "allocationSlot", -1] call FTCS_fnc_registrySet;
+                        // Parent repaired: anchor self-references, fireteams point at it
+                        if (_isAnchorR) then {
+                            [_x, "parentSquadGroup", _gR] call FTCS_fnc_registrySet;
+                        } else {
+                            if (!isNull _anchorGrpRS) then {
+                                [_x, "parentSquadGroup", _anchorGrpRS] call FTCS_fnc_registrySet;
+                            };
                         };
                     };
-                } forEach _slotsToRemove;
-                // Gather all fireteams of this squad
-                private _teamKeys = keys _tacticalTeams;
-                _teamKeys sort true;
+                } forEach _squadGroupIds;
+                // Gather all groups of this squad, ANCHOR FIRST (its Squad Leader
+                // element must stay at index 0 of the element list).
                 private _squadElements = [];
+                if (!isNull _anchorGrpRS) then { _squadElements pushBack _anchorGrpRS; };
                 {
-                    private _tGrp = (_tacticalTeams get _x) getOrDefault ["group", grpNull];
-                    if (!isNull _tGrp) then { _squadElements pushBack _tGrp; };
-                } forEach _teamKeys;
+                    if (!isNull _x && { _x != _anchorGrpRS }) then { _squadElements pushBack _x; };
+                } forEach (_squadGroupIds apply { _liveMapRS getOrDefault [_x, grpNull] });
 
                 if (count _squadElements > 1) then {
                     private _leadTeamGrp = _squadElements select 0;
@@ -1293,25 +1236,10 @@ switch (_commandCode) do {
             private _pltKey = format ["PLT_%1", _pltId];
             private _platoonsMap = FTCS_Company_Data getOrDefault ["platoons", createHashMap];
             private _pltData = _platoonsMap getOrDefault [_pltKey, createHashMap];
-            private _parsedSquads = _pltData getOrDefault ["parsedSquads", createHashMap];
-
-            // 1. Resolve target squad and its tactical teams
-            private _targetSquadData = createHashMap;
-            private _targetSquadId = "";
-            {
-                private _sId = _x;
-                private _sData = _y;
-                private _grp = _sData getOrDefault ["group", grpNull];
-                private _teams = _sData getOrDefault ["tacticalTeams", createHashMap];
-                if (_grp == _targetGroup) exitWith { _targetSquadData = _sData; _targetSquadId = _sId; };
-                {
-                    if ((_y getOrDefault ["group", grpNull]) == _targetGroup) exitWith {
-                        _targetSquadData = _sData;
-                        _targetSquadId = _sId;
-                    };
-                } forEach _teams;
-                if (_targetSquadId != "") exitWith {};
-            } forEach _parsedSquads;
+            // 1. Resolve target squad from the registry (PHASE 8b)
+            private _targetSquadId = if (!isNull _targetGroup) then {
+                (FTCS_Groups_Registry_Table getOrDefault [groupId _targetGroup, createHashMap]) getOrDefault ["squadId", ""]
+            } else { "" };
 
             // 2. Identify the macro slot where the parent squad is assigned (Slot 0, 1, 2, 3...)
             private _parentMacroSlot = 0;
@@ -1332,26 +1260,64 @@ switch (_commandCode) do {
                 if (_targetSquadId find "_4" >= 0) then { _parentMacroSlot = 3; };
             };
 
-            // 3. Determine which sub-team acts as scouts (prefer Team 2 / Scouts)
-            private _tacticalTeams = _targetSquadData getOrDefault ["tacticalTeams", createHashMap];
-            private _teamKeys = keys _tacticalTeams;
-            _teamKeys sort true;
+            // 3. Determine which sub-team acts as scouts.
+            // PHASE 8b: resolved from the REGISTRY (RULE 16) instead of the
+            // doctrine tree. "_targetSquadData" no longer exists here - the squad
+            // is identified by its "squadId", and its fireteams are every group
+            // sharing that id EXCEPT the one flagged "isSquadLeaderGroup".
+            // The scout element is the first such fireteam (Team 2 in doctrine
+            // order), matching the previous "_teamKeys select 1" behaviour.
+            // DETERMINISTIC selection (Lesson 3: HashMap order is not stable).
+            // 1. The scout team is the one whose doctrine "tacticalRole" is SCOUT
+            //    (declared in the doctrine teamRoles - Point 18 compliant).
+            // 2. Fallback: the team flagged as TEAM_2 by the doctrine type, which is
+            //    the historical scout slot in every FTCS composition.
+            private _liveMapTeam = createHashMap;
+            { if (!isNull _x) then { _liveMapTeam set [groupId _x, _x]; }; } forEach allGroups;
+            private _squadFireteams = [];   // [[key, group, teamType, role], ...]
+            {
+                if (((_y) getOrDefault ["squadId", ""]) isEqualTo _targetSquadId
+                    && { !((_y) getOrDefault ["isSquadLeaderGroup", false]) }) then {
+                    private _gT = _liveMapTeam getOrDefault [_x, grpNull];
+                    if (!isNull _gT) then {
+                        _squadFireteams pushBack [_x, _gT, ((_y) getOrDefault ["tacticalRole", ""])];
+                    };
+                };
+            } forEach FTCS_Groups_Registry_Table;
 
             private _scoutGroup = _targetGroup;
             private _scoutTeamKey = "";
-            if (count _teamKeys > 1) then {
-                _scoutTeamKey = _teamKeys select 1; // Team 2 (Scouts / Maneuver)
-                _scoutGroup = (_tacticalTeams get _scoutTeamKey) getOrDefault ["group", _targetGroup];
-            } else {
-                if (count _teamKeys == 1) then {
-                    _scoutTeamKey = _teamKeys select 0;
-                    _scoutGroup = (_tacticalTeams get _scoutTeamKey) getOrDefault ["group", _targetGroup];
+            // 1. Explicit doctrine role
+            {
+                if (_scoutTeamKey == "" && { ((_x select 2) isEqualTo "SCOUT") }) then {
+                    _scoutTeamKey = _x select 0;
+                    _scoutGroup = _x select 1;
                 };
+            } forEach _squadFireteams;
+            // 2. Deterministic fallback: TEAM_2 by doctrine order (never HashMap order)
+            if (_scoutTeamKey == "") then {
+                private _team2Key = format ["%1_TEAM_2", _targetSquadId];
+                {
+                    if ((_x select 0) isEqualTo _team2Key) exitWith {
+                        _scoutTeamKey = _x select 0;
+                        _scoutGroup = _x select 1;
+                    };
+                } forEach _squadFireteams;
+            };
+            // 3. Last resort: the single fireteam available (stable because unique)
+            if (_scoutTeamKey == "" && { count _squadFireteams == 1 }) then {
+                _scoutTeamKey = (_squadFireteams select 0) select 0;
+                _scoutGroup = (_squadFireteams select 0) select 1;
             };
 
             if (_scoutTeamKey == "") exitWith {
                 systemChat format ["[SCOUT DETACHMENT] Warning: %1 has no separate scout fireteam to detach.", _targetRole];
             };
+            // Every OTHER fireteam of the squad (used to re-compact the parent)
+            private _remainingFireteams = [];
+            {
+                if (!((_x select 0) isEqualTo _scoutTeamKey)) then { _remainingFireteams pushBack (_x select 1); };
+            } forEach _squadFireteams;
 
             // 4. Determine destination slot strictly based on Parent Squad Slot or explicit slot command:
             private _destSlot = 6;
@@ -1413,7 +1379,8 @@ switch (_commandCode) do {
 
             // 6. Assign new slot mapping in platoon data
             _formationSlotsMap set [_destSlot, _scoutTeamKey];
-            _pltData set ["formationSlots", _formationSlotsMap];
+            // PHASE 3: registry-first write through the platoon accessor
+            [_pltId, "formationSlots", _formationSlotsMap] call FTCS_fnc_registrySetPlatoon;
 
             // 7. Dispatch scouts LOCALLY to the target slot without recalculating or disturbing the rest of the platoon
             private _ldr = call _fnc_getPlatoonLeaderUnit;
@@ -1452,15 +1419,19 @@ switch (_commandCode) do {
             [_scoutGroup, _followMode, _ldr] spawn FTCS_fnc_formationsGroupDoFollowCommander;
 
             // 8. Re-compact the parent squad's internal formation locally without the detached scouts
-            // Preserve Squad Leader and remaining members in place without forward leaps
+            // PHASE 8b: the remaining elements are the squad ANCHOR (Squad Leader
+            // element) followed by its other fireteams, all resolved above from
+            // the registry - order preserved so the anchor stays first.
             private _parentRemainingTeams = [];
+            private _squadAnchorGrp = grpNull;
             {
-                private _tKey = _x;
-                if (_tKey != _scoutTeamKey) then {
-                    private _tGrp = (_tacticalTeams get _tKey) getOrDefault ["group", grpNull];
-                    if (!isNull _tGrp) then { _parentRemainingTeams pushBack _tGrp; };
+                if (((_y) getOrDefault ["squadId", ""]) isEqualTo _targetSquadId
+                    && { ((_y) getOrDefault ["isSquadLeaderGroup", false]) }) then {
+                    _squadAnchorGrp = _liveMapTeam getOrDefault [_x, grpNull];
                 };
-            } forEach _teamKeys;
+            } forEach FTCS_Groups_Registry_Table;
+            if (!isNull _squadAnchorGrp) then { _parentRemainingTeams pushBack _squadAnchorGrp; };
+            { if (!isNull _x) then { _parentRemainingTeams pushBack _x; }; } forEach _remainingFireteams;
 
             if (count _parentRemainingTeams > 1) then {
                 private _leadParentGrp = _parentRemainingTeams select 0;
@@ -1545,23 +1516,22 @@ switch (_commandCode) do {
         private _orderToken = "SQD_" + (_parts select 2);
         if (count _parts > 4) then { _orderToken = _orderToken + "_" + (_parts select 3); };
 
+        // PHASE 8b: resolve the addressed squad from the registry. The squad's
+        // anchor ("isSquadLeaderGroup") IS the element that carries the Squad
+        // Leader, which is exactly what the old "first tactical team" lookup
+        // was approximating.
         private _pltId = missionNamespace getVariable ["FTCS_Player_Platoon_ID", 1];
-        private _pltKey = format ["PLT_%1", _pltId];
-        private _platoonsMap = FTCS_Company_Data getOrDefault ["platoons", createHashMap];
-        private _pltData = _platoonsMap getOrDefault [_pltKey, createHashMap];
-        private _parsedSquads = _pltData getOrDefault ["parsedSquads", createHashMap];
         private _sqdKey = format ["SQD_%1_%2", _pltId, _slotIdx];
-        private _sData = _parsedSquads getOrDefault [_sqdKey, createHashMap];
-
-        // Prefer the first tactical team group; fall back to the squad-level group
-        private _tacticalTeams = _sData getOrDefault ["tacticalTeams", createHashMap];
-        private _tKeys = keys _tacticalTeams;
-        _tKeys sort true;
+        private _liveMapSqd2 = createHashMap;
+        { if (!isNull _x) then { _liveMapSqd2 set [groupId _x, _x]; }; } forEach allGroups;
         private _targetGrp = objNull;
-        if (count _tKeys > 0) then {
-            _targetGrp = (_tacticalTeams get (_tKeys select 0)) getOrDefault ["group", objNull];
-        };
-        if (isNull _targetGrp) then { _targetGrp = _sData getOrDefault ["group", objNull]; };
+        {
+            if (isNull _targetGrp
+                && { ((_y) getOrDefault ["squadId", ""]) isEqualTo _sqdKey }
+                && { (_y) getOrDefault ["isSquadLeaderGroup", false] }) then {
+                _targetGrp = _liveMapSqd2 getOrDefault [_x, objNull];
+            };
+        } forEach FTCS_Groups_Registry_Table;
 
         if (isNull _targetGrp) exitWith {
             systemChat format ["[SQD ORDER] Error: squad %1 not found in platoon data.", _slotIdx];
@@ -1673,10 +1643,9 @@ switch (_commandCode) do {
         // Rejoin all detached scouts across all squads back to their parent elements
         private _pltId = missionNamespace getVariable ["FTCS_Player_Platoon_ID", 1];
         private _pltKey = format ["PLT_%1", _pltId];
-        private _platoonsMap = FTCS_Company_Data getOrDefault ["platoons", createHashMap];
-        private _pltData = _platoonsMap getOrDefault [_pltKey, createHashMap];
-        private _formationSlotsMap = _pltData getOrDefault ["formationSlots", createHashMap];
-        private _parsedSquads = _pltData getOrDefault ["parsedSquads", createHashMap];
+        // PHASE 8b: slot map from the platoon registry (RULE 16)
+        private _formationSlotsMap = [_pltId, "formationSlots", createHashMap] call FTCS_fnc_registryGetPlatoon;
+        if (!(_formationSlotsMap isEqualType createHashMap)) then { _formationSlotsMap = createHashMap; };
 
         private _detachedSlots = [5, 6, 7, 8, 11, 12];
         {
@@ -1689,43 +1658,69 @@ switch (_commandCode) do {
             };
         } forEach _detachedSlots;
 
-        _pltData set ["formationSlots", _formationSlotsMap];
+        // PHASE 3: registry-first write through the platoon accessor
+        [_pltId, "formationSlots", _formationSlotsMap] call FTCS_fnc_registrySetPlatoon;
 
-        // March-world re-integration: scouts currently detached (SCOUT_DETACHED
-        // movingMode) are returned to the platoon's active follow mode and re-registered
-        // against their parent squads, so a road/trail order re-chains them cleanly.
+        // March-world re-integration (PHASE 8b, registry pass by platoonId).
+        // A recalled scout must return to a CLEAN SQUAD-BOUND state, not just get
+        // a new movingMode. Leaving "allocationSlot" pointing at 5/6/7/8/11/12 or
+        // leaving "parentSquadGroup" null made the NEXT HALT/REJOIN gather treat
+        // the team as a platoon-level element and anchor it to the lieutenant
+        // (reported bug: recalled scout jumping in front of the platoon leader).
         private _followModeRejoin = missionNamespace getVariable ["FTCS_Platoon_Follow_Mode", "FOLLOWING_COMMANDER_REL"];
+        private _liveMapRA = createHashMap;
+        { if (!isNull _x) then { _liveMapRA set [groupId _x, _x]; }; } forEach allGroups;
+        // Squad anchors by squadId, so a recalled fireteam can be re-parented
+        private _anchorBySquad = createHashMap;
         {
-            private _sDataR = _y;
-            private _tacticalTeamsR = _sDataR getOrDefault ["tacticalTeams", createHashMap];
-            {
-                private _tGrpR = (_tacticalTeamsR get _x) getOrDefault ["group", grpNull];
-                if (!isNull _tGrpR) then {
-                    private _tGrpIdR = groupId _tGrpR;
-                    if (([_tGrpIdR, "movingMode"] call FTCS_fnc_registryGet) == "SCOUT_DETACHED") then {
-                        [_tGrpIdR, "movingMode", _followModeRejoin] call FTCS_fnc_registrySet;
+            if (((_y) getOrDefault ["platoonId", -1]) == _pltId
+                && { ((_y) getOrDefault ["isSquadLeaderGroup", false]) }) then {
+                _anchorBySquad set [((_y) getOrDefault ["squadId", ""]), (_liveMapRA getOrDefault [_x, grpNull])];
+            };
+        } forEach FTCS_Groups_Registry_Table;
+        {
+            private _gEntryR = _y;
+            if (((_gEntryR getOrDefault ["platoonId", -1]) == _pltId)) then {
+                private _wasDetached = (((_gEntryR getOrDefault ["movingMode", ""])) == "SCOUT_DETACHED")
+                    || { ((_gEntryR getOrDefault ["teamAttachment", ""])) == "DETACHED_FREE" }
+                    || { ((_gEntryR getOrDefault ["allocationSlot", -1])) in [5, 6, 7, 8, 11, 12] };
+                if (_wasDetached) then {
+                    private _isAnchorA = (_gEntryR getOrDefault ["isSquadLeaderGroup", false]);
+                    private _sqdIdA = (_gEntryR getOrDefault ["squadId", ""]);
+                    [_x, "movingMode", _followModeRejoin] call FTCS_fnc_registrySet;
+                    [_x, "teamAttachment", "SQUAD_BOUND"] call FTCS_fnc_registrySet;
+                    [_x, "allocationSlot", -1] call FTCS_fnc_registrySet;
+                    if (_isAnchorA) then {
+                        private _selfGrp = _liveMapRA getOrDefault [_x, grpNull];
+                        if (!isNull _selfGrp) then { [_x, "parentSquadGroup", _selfGrp] call FTCS_fnc_registrySet; };
+                    } else {
+                        private _anchorA = _anchorBySquad getOrDefault [_sqdIdA, grpNull];
+                        if (!isNull _anchorA) then { [_x, "parentSquadGroup", _anchorA] call FTCS_fnc_registrySet; };
                     };
                 };
-            } forEach _tacticalTeamsR;
-        } forEach _parsedSquads;
+            };
+        } forEach FTCS_Groups_Registry_Table;
 
-        // Trigger local rejoin for each squad
+        // Trigger local rejoin per squad: rebuild each squad's element list from
+        // the registry (squadId), anchor first, then its fireteams.
         {
-            private _sqdKey = _x;
-            if (_sqdKey find "_0" < 0) then {
-                private _sData = _y;
-                private _tacticalTeams = _sData getOrDefault ["tacticalTeams", createHashMap];
-                private _teamKeys = keys _tacticalTeams;
-                _teamKeys sort true;
-                private _squadElements = [];
+            private _sqdAnchor = _x;
+            if (!isNull _sqdAnchor && { ((FTCS_Groups_Registry_Table getOrDefault [groupId _sqdAnchor, createHashMap]) getOrDefault ["squadId", ""]) != format ["SQD_%1_0", _pltId] }) then {
+                private _sqdId = (FTCS_Groups_Registry_Table getOrDefault [groupId _sqdAnchor, createHashMap]) getOrDefault ["squadId", ""];
+                private _squadElements = [_sqdAnchor];
+                private _liveMapR = createHashMap;
+                { if (!isNull _x) then { _liveMapR set [groupId _x, _x]; }; } forEach allGroups;
                 {
-                    private _tGrp = (_tacticalTeams get _x) getOrDefault ["group", grpNull];
-                    if (!isNull _tGrp) then { _squadElements pushBack _tGrp; };
-                } forEach _teamKeys;
+                    if (((_y) getOrDefault ["squadId", ""]) isEqualTo _sqdId
+                        && { !((_y) getOrDefault ["isSquadLeaderGroup", false]) }) then {
+                        private _gT = _liveMapR getOrDefault [_x, grpNull];
+                        if (!isNull _gT) then { _squadElements pushBack _gT; };
+                    };
+                } forEach FTCS_Groups_Registry_Table;
 
                 if (count _squadElements > 1) then {
                     private _leadTeamLeader = leader (_squadElements select 0);
-                    private _squadFormType = [_sqdKey, "squadFormation"] call FTCS_fnc_registryGet;
+                    private _squadFormType = [_sqdId, "squadFormation"] call FTCS_fnc_registryGet;
                     if (isNil "_squadFormType" || {!(_squadFormType isEqualType "")}) then { _squadFormType = "WEDGE"; };
                     [_squadElements, _squadFormType, 4, 0] call FTCS_fnc_formationsTypeSquadSet;
 
@@ -1739,7 +1734,7 @@ switch (_commandCode) do {
                     } forEach _subTeams;
                 };
             };
-        } forEach _parsedSquads;
+        } forEach ((FTCS_Platoons_Registry getOrDefault [_pltId, createHashMap]) getOrDefault ["squads", []]);
 
         systemChat "[SCOUT REJOIN] All detached platoon scouts recalled and rejoined with parent squads.";
     };
