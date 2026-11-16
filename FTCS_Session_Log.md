@@ -1,4 +1,4 @@
-# FTCS — Session Log (estado de trabajo entre sesiones)
+﻿# FTCS — Session Log (estado de trabajo entre sesiones)
 
 > **PARA LA IA QUE RETOMA EL PROYECTO:** lee este fichero DESPUÉS del
 > `FTCS (First-Person Tactical Command Simulation) - Documento de Notas….md`
@@ -8,12 +8,129 @@
 >
 > Reglas de este fichero:
 > - La entrada **más reciente va ARRIBA**, justo debajo de esta cabecera.
-> - Cada entrada es un resumen cerrado: qué se tocó, por qué, qué está verificado y
->   qué queda pendiente. No se reescriben entradas antiguas (son histórico).
+> - Cada entrada es un resumen cerrado de una sesión completa: qué se tocó, por qué,
+>   qué está verificado y qué queda pendiente. No se reescriben entradas antiguas.
+> - Cuando una sesión se cierra, su entrada se **consolida en un solo bloque**: las
+>   entradas intermedias de esa misma sesión se agrupan aquí. El historial técnico
+>   detallado de cada incidencia vive en `FTCS_Programming_Lessons.md`, numerado.
 > - No duplica lecciones: cada hallazgo técnico vive en
 >   `FTCS_Programming_Lessons.md` y aquí sólo se referencia por número.
 > - Las entradas se escriben en **castellano** (es documentación para el humano),
 >   igual que esta cabecera y el documento de diseño.
+
+---
+
+## SESIÓN 2026-11-16 (CIERRE) — Columna TRAIL: robusta y funcionando; falta probar el COMPACT
+
+**Estado:** la **columna de trail funciona perfectamente y es muy robusta tal y como
+está implementada ahora** (valoración del programador en partida). Arranca en cascada,
+todos los grupos entran, nadie corta camino, el TRIM no estrangula la traza y el último
+grupo ya no se queda fuera. **Lo único pendiente es probar el COMPACT de trail.**
+
+### 1. Cómo funciona la columna hoy (leer esto primero)
+
+```
+fn_trailColumnSet            reparte trailOffsetDist = (n-1)*3 + 8 por grupo
+                             orden de la columna     = [9,0,4,1,2,3,10,5]  (RTO primero)
+                             siembra el ancla: trailMinSeatArc/-1, trailMaxOffset,
+                             trimCushion/150, trailLaneTargetIdx/-1
+fn_trailAdvanceAnchor        hilo del recorder (0.25 s):
+                             0) fn_trailTrimToArc ANTES de grabar
+                             1) graba 1 punto / 2 m si fn_navIsValidGround (dz <= 0.5)
+                             2) convergencia al parar (headDist = longitud real)
+fn_trailTrimToArc            ÚNICO escritor del TRIM. Lee el registro él mismo y nunca
+                             recorta dentro de la profundidad de la columna; lote de 20
+                             puntos, colchón 150 m, mínimo 3 puntos. Desplaza headDist y
+                             los arcos publicados, y renumera los índices persistidos.
+fn_formationsTrailQueueSync  publica por grupo trailQueueIndex / trailQueueHasSeat /
+                             trailQueueTipIdx y en el ancla trailMinSeatArc, trailTailArc,
+                             trailMaxOffset. seat = trailIndexAtArc(headDist - offset),
+                             encadenado ORDEN + SEPARACIÓN; si el archivo está comprimido,
+                             mínima ORDEN (1 índice) antes que HOLDS.
+fn_formationsGroupFollowTrail  un hilo por grupo (0.35 s). Camina PUNTO A PUNTO con
+                             trailLaneTargetIdx (look-ahead 3), aplica
+                             trailShoulderOffset (doble carril), timeout = salta UN índice.
+fn_groupAwakenForMarch       ÚNICO sitio que emite enableAI/disableAI (Regla 15)
+```
+
+**Invariantes que NO se pueden romper:**
+
+1. `trailPath` sólo lo escribe `fn_trailAdvanceAnchor`, y sólo con puntos que pasan
+   `fn_navIsValidGround` (dz ≤ 0.5 m). El congelamiento en el puente ES la barrera.
+2. Todo índice persistido en el registro debe renumerarse cuando el TRIM recorta
+   (hoy: `trailCursorIdx`, `trailLaneTargetIdx`). Si se añade otro campo de índice,
+   **hay que añadirlo a esa lista**.
+3. La cola garantiza ORDEN y SEPARACIÓN; nunca recalcula el espaciado doctrinal. La
+   separación **cede ante el orden** cuando el archivo está comprimido contra la punta.
+4. Ningún límite de memoria puede depender de un valor que otro hilo publique DESPUÉS
+   de él (Lección 32).
+5. El grupo siempre camina puntos reales de la traza, en orden: nunca se le manda al
+   asiento de golpe (Lección 31).
+
+### 2. Lo verificado en partida
+
+| Comprobación | Resultado |
+|---|---|
+| Arranque en cascada | ✅ todos los grupos arrancan, mucho más rápido que antes |
+| Orden de la columna | ✅ RTO primero (`off=1`), Guide último |
+| Separación doctrinal | ✅ asientos distintos y escalonados |
+| Sin cortar camino | ✅ todos siguen la traza del líder |
+| Último grupo | ✅ entra en la columna (orden mínima si hace falta) |
+| Cruce de puente | ✅ verificado en sesiones anteriores |
+| Menú de órdenes | ✅ se abre; Compact se habilita sin reabrir |
+
+### 3. Problemas encontrados hoy y su causa raíz (todas cerradas)
+
+| Problema | Causa | Lección |
+|---|---|---|
+| Menú no se abría (`_pltdatad` línea 281) | global `FTCS_Company_Data` usado como receptor de `getOrDefault` | 26 |
+| El mismo error se repetía en partida | fichero sin recompilar + Arma retenía el fichero abierto | 26 |
+| Error de variables de menú en cascada | `private` dentro de `for` + reentrancia → se extrajo `fn_commandMenusRefresh` | 28 |
+| Compact trail: dos últimos sin compactar | participantes filtrados solo por `trailOffsetDist > 0` (fantasmas de otra marcha) | 29 |
+| Últimos grupos tardaban / no arrancaban | el TRIM se comía la traza bajo su profundidad | 30, 32 |
+| Grupos cortaban camino | el timeout saltaba al asiento en vez de un índice | 31 |
+| Último grupo fuera de la columna | `frontSeat - gapIdx` negativo → HOLDS | 33 |
+
+### 4. Ficheros tocados en la sesión
+
+| Fichero | Qué se hizo |
+|---|---|
+| `Functions/UI/fn_commandMenusRefresh.sqf` | **NUEVA.** Único dueño del estado de los menús; guard de reentrancia. `description.ext > UI` |
+| `Functions/Interactions/fn_openSubordinateMenu.sqf` | Adelgazado: refresca y muestra, ya no recalcula flags |
+| `Functions/Interactions/fn_applyCommandToTarget.sqf` | Llama al refresco al final de cada cambio de marcha |
+| `Functions/Roads/fn_trailTrimToArc.sqf` | **NUEVA.** Único escritor del TRIM, con guard de profundidad propio |
+| `Functions/Roads/fn_trailAdvanceAnchor.sqf` | TRIM delegado (sección 0) |
+| `Functions/Movement/fn_formationsTrailQueueSync.sqf` | Publica `trailMinSeatArc`, `trailTailArc`, `trailMaxOffset`; orden mínima si el archivo está comprimido |
+| `Functions/Formations/fn_formationsTrailCompactColumn.sqf` | Filtro de participantes = el de la cola; arco propio por miembro; footprint nominal |
+| `Functions/Formations/fn_formationsGroupFollowTrail.sqf` | Timeout de un índice; fallback al índice 0 si no hay asiento |
+| `Functions/Formations/fn_trailColumnSet.sqf` | Siembra de trim (`trailMinSeatArc`, `trailMaxOffset`, `trimCushion` 150) |
+| `description.ext`, `tools/verify_syntax.ps1` | Registro de las dos funciones nuevas |
+
+Documentación al día: `FTCS_Data_Structure_Reference.md` (§3, campos nuevos del ancla),
+`FTCS_Programming_Lessons.md` (Lecciones 24-33), `FTCS_Menu_Structure_Reference`
+(propiedad del estado de los menús).
+
+### 5. Pendiente — lo único que queda
+
+1. **Probar el COMPACT de trail con la columna ya robusta.** Qué comprobar:
+   - Las parejas marchan **a la par** (±0.75 m del eje) y el **último** equipo también.
+   - El log `[FTCS][TRAIL][COMPACT] plt N: X participants -> Y pairs, unpaired=Z`
+     cuadra con la columna real (`unpaired` 0 o 1).
+   - Giro cerrado, parada/arranque (dispara el TRIM) y puente **con la columna
+     compactada**.
+   - Descompactar re-ordenando Leader Trail Column.
+
+### 6. Deuda técnica conocida (no bloquea)
+
+1. `trailSlotIndex` sigue sin escritor pero el follower lo **prefiere**: reservado y
+   documentado, no escribir sin revisar el consumidor.
+2. Fusionar `fn_formationsRoadCompactColumn` y `fn_formationsTrailCompactColumn` en un
+   helper común con dos samplers.
+3. Compact de carretera: pasar del footprint medido al nominal (el de trail ya lo usa).
+4. **PENDING-5**: `_slotOrder = [9,0,4,1,2,3,10,5]` duplicado → extraer a función.
+5. **PENDING-6**: auditar otros usos de globales como receptor de `getOrDefault`.
+6. Grupo sin líder vivo / líder inconsciente: no comprobado; el watchdog cubre sólo
+   líder VIVO.
 
 ---
 
@@ -31,8 +148,8 @@ recorrido largo con paradas, puente y bajas.
 fn_trailColumnSet          reparte trailOffsetDist  = (n-1)*3 + 8   por grupo
                            orden de la columna      = [9,0,4,1,2,3,10,5]  (RTO primero)
 fn_trailAdvanceAnchor      graba la traza del líder (1 punto / 2 m, se congela si el
-                           líder está elevado = puente), TRIM a 200 m, y al recortar
-                           RENUMERA los índices guardados en el registro
+                           líder está elevado = puente); delega el TRIM (ver la
+                           entrada de cierre 2026-11-16, el modelo cambió)
 fn_formationsTrailQueueSync publica por grupo: trailQueueIndex (su asiento),
                            trailQueueHasSeat, trailQueueTipIdx
                            seat = trailIndexAtArc(trail, headDist - offset)
@@ -64,7 +181,11 @@ fn_groupAwakenForMarch     ÚNICO sitio que emite enableAI/disableAI (Regla 15)
 | Giros cerrados | ✅ el grupo sigue sin quedarse clavado |
 | Sin errores de código en el flujo | ✅ (sólo el error de menú, ver §5) |
 
-### 3. BUG CONOCIDO Y ABIERTO — un grupo puede perder su posición
+### 3. BUG CONOCIDO — un grupo puede perder su posición (ENTRADA HISTÓRICA)
+
+> **Desactualizado el 2026-11-16:** la cola se reescribió por completo (ver la entrada
+> de cierre de 2026-11-16). Se conserva como historial del diagnóstico, NO como estado
+> actual del código.
 
 **Síntoma:** al morir el líder de un grupo (cayó al agua en el puente), ese grupo se
 quedó plantado y terminó con el asiento de **otro** grupo (`seat 31` cuando le
@@ -84,10 +205,10 @@ El `cap` (asiento del grupo de delante) saltó de **3 a 44** en un tick.
 muerte del líder) o cambia de identidad, la cadena se reconstruye sin él y vuelve a
 entrar con el `_frontIdx` de otro grupo → hereda un asiento ajeno.
 
-**Corrección propuesta (NO aplicada):** hacer el asiento **monótono creciente** por
-grupo: guardar el último publicado y no publicar nunca uno menor. Elimina de raíz
-cualquier salto hacia atrás, venga del trim, de la cadena o de una muerte.
-Aplicarlo en `fn_formationsTrailQueueSync` (un campo más en el registro).
+**Corrección propuesta entonces (superada):** asiento monótono creciente por grupo. La
+cola actual resuelve el mismo problema de otra forma: el orden es una cadena estricta
+por `trailOffsetDist` y el asiento se deriva por arco en cada tick, sin memoria previa
+que pueda quedar desfasada.
 
 **Nota:** Arma reasigna el líder del grupo automáticamente al morir, y el follower usa
 `_group move` / `leader _group`, así que **el grupo sí continúa**; lo que se rompe es
@@ -109,18 +230,17 @@ su ASIENTO, no su movimiento.
 El nº 8 es el que explica el "llega, se marca atrás y vuelve" que sólo pasaba al
 parar y arrancar (de un tirón el trim no se dispara).
 
-### 5. Error de menú encontrado en el RPT (cosmético, sin arreglar)
+### 5. Error de menú encontrado en el RPT — ARREGLADO el 2026-11-16
 
 ```
 20:41:25  Error Undefined variable: _pltdatad / _parsedsquadsd / _sdatad
           en fn_openSubordinateMenu.sqf (líneas 271-283)
 ```
 
-`FTCS_Company_Data` no estaba disponible en ese instante; la cadena de
-`getOrDefault` se propaga como `undefined`. **El menú sigue funcionando** con nombres
-genéricos ("Squad 1"), sólo ensucia el RPT. Arreglo: guard `isNil "FTCS_Company_Data"`
-y caption por defecto. Nota: esa lectura de doctrina en runtime es una concesión para
-CAPTIONS (Regla 16), no para lógica.
+Se diagnosticó aquí como "cosmético"; en realidad **impedía abrir el menú** (el script
+abortaba antes de `showCommandingMenu`). Cerrado en la sesión del 2026-11-16: lectura
+vía `missionNamespace getVariable` + guardas de tipo, y el refresco de flags se extrajo
+a `fn_commandMenusRefresh`. Ver Lecciones 26 y 28.
 
 ### 6. Comportamiento esperado que NO es un bug
 
@@ -131,20 +251,17 @@ CAPTIONS (Regla 16), no para lógica.
 - **Soldados que se caen del puente**: es el pathfinding del motor en un navmesh
   estrecho con varios grupos convergiendo. No se controla desde la lógica.
 
-### 7. Pendientes para la próxima sesión (por prioridad)
+### 7. Pendientes que quedaron en esta fecha — estado al 2026-11-16
 
-1. **Asiento monótono** en `fn_formationsTrailQueueSync` (§3). Es el único bug abierto
-   que rompe la columna.
-2. **Guard del menú** en `fn_openSubordinateMenu` (§5).
-3. **Cláusulas de líder**: grupo sin líder vivo (`isNull (leader _group)`) y líder
-   inconsciente. Hoy no se comprueban; el watchdog cubre sólo líder VIVO.
-4. **`fn_formationsTrailCompactColumn`** sigue usando otra fórmula (`_rearmost` en
-   vivo + `n*3.5`) en vez de `(n-1)*3 + 8`. Unificar.
-5. **PENDING-5**: `_slotOrder` duplicado entre road y trail → extraer a una función.
-6. **Lección 14** del fichero de lecciones describe el modelo de ARCOS, ya abandonado:
-   marcarla como histórica.
-7. **Documentar la migración arco→índice final**: la Lección 22 describe un modelo de
-   arco que el follower YA NO usa (el arco vive sólo dentro de la cola).
+| # | Pendiente | Estado hoy |
+|---|---|---|
+| 1 | Asiento monótono en la cola | **Superado.** La cola se reescribió (2026-11-16) |
+| 2 | Guard del menú | **Hecho.** Lecciones 26 y 28 |
+| 3 | Cláusulas de líder (líder muerto / inconsciente) | **Sigue abierto.** Sólo está el watchdog de líder vivo |
+| 4 | Fórmula del footprint en el compact de trail | **Hecho.** Usa el modelo nominal |
+| 5 | PENDING-5: `_slotOrder` duplicado | **Sigue abierto** |
+| 6 | Lección 14 (modelo de arcos) marcada como histórica | **Hecho** |
+| 7 | Migración arco→índice documentada | **Hecho** (Lección 22 y entrada de cierre) |
 
 ### 8. Aviso de compilación
 
@@ -156,9 +273,12 @@ CAPTIONS (Regla 16), no para lógica.
 
 ## SESIÓN 2026-11-15 (mañana/tarde) — Columna TRAIL: cola de cruce (puentes), orden de marcha y despertar de la IA
 
-**Estado:** implementado. **Orden y cascada VERIFICADOS en el RPT** (15:22).
-Queda **un solo bloqueo**: recompilar `CfgFunctions` para que exista
-`FTCS_fnc_groupAwakenForMarch` (ver §5).
+> **Estado actual (2026-11-16):** cerrada. `fn_groupAwakenForMarch` está registrada y
+> compilada; la columna funciona. Se conserva como historial del diseño de la cola de
+> cruce.
+
+**Estado en su fecha:** implementado. **Orden y cascada VERIFICADOS en el RPT** (15:22);
+quedaba recompilar `CfgFunctions` para que existiese `FTCS_fnc_groupAwakenForMarch`.
 **Foco:** seguimiento en columna de estela (TRAIL_COLUMN) y su cruce de puentes / cortes.
 
 ### 1. El modelo que se acordó (esto es lo que hay que entender primero)

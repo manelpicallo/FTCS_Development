@@ -154,9 +154,24 @@ private _assignedCount = 0;
     _assignedCount = _assignedCount + 1;
 } forEach _chained;
 
-// Highest assigned offset (needed by the trail trimming logic)
+// Highest assigned offset. INFORMATIVE ONLY: the trim does NOT cut against it
+// anymore (it goes stale as soon as the layout changes - compact, casualties,
+// re-orders). fn_trailTrimToArc cuts against "trailMinSeatArc", the oldest arc the
+// column really occupies, published by fn_formationsTrailQueueSync every tick.
 private _maxOffset = _offsetCursor;
 _anchor set ["maxTrailOffset", _maxOffset];
+// TRIM state: -1 = the queue has not spoken yet, so the recorder trims nothing.
+_anchor set ["trailMinSeatArc", -1];
+_anchor set ["trailTailArc", -1];
+// Deepest offset of the column, republished by fn_formationsTrailQueueSync every
+// tick. fn_trailTrimToArc treats it as a HARD FLOOR: the trim can never cut ground
+// that is still inside the column's own depth.
+_anchor set ["trailMaxOffset", _maxOffset];
+// Lag allowance behind the rear group. MUST match the default in fn_trailTrimToArc:
+// a seeded value always wins over that default, so 100 here silently defeated the
+// 150 m cushion the trim was tuned for (Lesson 32).
+_anchor set ["trimCushion", 150.0];
+_anchor set ["trimEvents", 0];
 _anchor set ["columnLayout", "STAGGERED"]; // re-issuing trail unlocks the Compact option
 
 systemChat format ["[TRAIL COLUMN] %1 teams chained behind the leader track.", _assignedCount];

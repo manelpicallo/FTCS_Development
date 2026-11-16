@@ -1,4 +1,4 @@
-/*
+﻿/*
     ================================================================================
     File: fn_openSubordinateMenu.sqf
     Module: Interactions
@@ -13,20 +13,20 @@
     |                    DYNAMIC PHASE MENU ROUTING                               |
     +-----------------------------------------------------------------------------+
     |                                                                             |
-    |   [Target Interaction] ──► [Distance Check]                                 |
-    |                                │                                            |
-    |                    <= 20m ─────┴───── > 20m ──► #USER:FTCS_MENU_VisualSignals|
-    |                      │                                                      |
-    |        ┌─────────────┴──────────────┐                                       |
-    |        ▼                            ▼                                       |
+    |   [Target Interaction] â”€â”€â–º [Distance Check]                                 |
+    |                                â”‚                                            |
+    |                    <= 20m â”€â”€â”€â”€â”€â”´â”€â”€â”€â”€â”€ > 20m â”€â”€â–º #USER:FTCS_MENU_VisualSignals|
+    |                      â”‚                                                      |
+    |        â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”´â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”                                       |
+    |        â–¼                            â–¼                                       |
     |  [PLATOON / SERGEANT]            [SQUAD LEADER]                             |
-    |        │                            │                                       |
+    |        â”‚                            â”‚                                       |
     |   Check FTCS_CurrentPhase      Check FTCS_CurrentPhase                      |
-    |        ├─ Phase 1: Approach         ├─ Phase 1: Approach                    |
-    |        │   (#USER:Sgt_Phase1)       │   (#USER:Squad_Phase1)                |
-    |        ├─ Phase 2: Overwatch        ├─ Phase 2: Overwatch                   |
-    |        │   (#USER:Sgt_Phase2)       │   (#USER:Squad_Phase2)                |
-    |        └─ Phase 3: Combat           └─ Phase 3: Combat                      |
+    |        â”œâ”€ Phase 1: Approach         â”œâ”€ Phase 1: Approach                    |
+    |        â”‚   (#USER:Sgt_Phase1)       â”‚   (#USER:Squad_Phase1)                |
+    |        â”œâ”€ Phase 2: Overwatch        â”œâ”€ Phase 2: Overwatch                   |
+    |        â”‚   (#USER:Sgt_Phase2)       â”‚   (#USER:Squad_Phase2)                |
+    |        â””â”€ Phase 3: Combat           â””â”€ Phase 3: Combat                      |
     |            (#USER:Sgt_Phase3)           (#USER:Squad_Phase3)                |
     +-----------------------------------------------------------------------------+
     ================================================================================
@@ -134,195 +134,9 @@ private _menuName = switch (_menuType) do {
     };
 };
 
-// Synchronize Follow Mode options in Platoon Formations menu:
-// The currently active mode appears in gray / disabled ("1", "0") so the alternative is selectable ("1", "1")
-// Indices in FTCS_MENU_PlatoonFormations_P1:
-//   select 9 -> Option 9: Relative
-//   select 10 -> Option 10: Absolute
-private _currentFollowMode = missionNamespace getVariable ["FTCS_Platoon_Follow_Mode", "FOLLOWING_COMMANDER_REL"];
-if (_currentFollowMode == "FOLLOWING_COMMANDER_REL") then {
-    (FTCS_MENU_PlatoonFormations_P1 select 9) set [6, "0"]; // Relative disabled (gray)
-    (FTCS_MENU_PlatoonFormations_P1 select 10) set [6, "1"]; // Absolute enabled (white)
-} else {
-    (FTCS_MENU_PlatoonFormations_P1 select 9) set [6, "1"]; // Relative enabled (white)
-    (FTCS_MENU_PlatoonFormations_P1 select 10) set [6, "0"]; // Absolute disabled (gray)
-};
-
-// Dynamically evaluate combat effectiveness of detached scout slots (Slots 11, 12, 7, 6, 8, 5)
-// Gray out (disable) options if a combat-effective team already occupies that slot.
-// If all soldiers in that team are dead or incapacitated, re-enable ("1", "1") so fresh scouts can reinforce it.
-// PHASE 3: formationSlots is read from the platoon REGISTRY (RULE 16). The
-// accessor falls back to the doctrine mirror while the migration is in flight,
-// so the menu keeps working even if a slot map was not seeded yet.
-private _activeSlotsMap = [_pltId, "formationSlots", createHashMap] call FTCS_fnc_registryGetPlatoon;
-if (!(_activeSlotsMap isEqualType createHashMap)) then { _activeSlotsMap = createHashMap; };
-
-private _fnc_isSlotOccupiedAndEffective = {
-    params ["_slotNum"];
-    private _isOccupied = false;
-    if (_slotNum in _activeSlotsMap) then {
-        private _grpCandidate = grpNull;
-        if (!isNil "Platoon_Formation_Position_List" && {count Platoon_Formation_Position_List > _slotNum}) then {
-            _grpCandidate = (Platoon_Formation_Position_List select _slotNum) select 2;
-        };
-        if (isNull _grpCandidate && {!isNil "FTCS_Groups_Registry_Table"}) then {
-            {
-                if ((_y getOrDefault ["allocationSlot", -1]) == _slotNum) exitWith {
-                    private _cand = missionNamespace getVariable [_x, grpNull];
-                    if (!isNull _cand) then { _grpCandidate = _cand; };
-                };
-            } forEach FTCS_Groups_Registry_Table;
-        };
-        if (!isNull _grpCandidate) then {
-            private _effectiveCount = { alive _x && {lifeState _x != "INCAPACITATED"} } count (units _grpCandidate);
-            _isOccupied = (_effectiveCount > 0);
-        };
-    };
-    _isOccupied
-};
-
-// Update Platoon Scout Directives Menu (FTCS_MENU_Platoon_Scouts)
-if (!isNil "FTCS_MENU_Platoon_Scouts") then {
-    private _occ11 = [11] call _fnc_isSlotOccupiedAndEffective;
-    private _occ12 = [12] call _fnc_isSlotOccupiedAndEffective;
-    private _occ7  = [7] call _fnc_isSlotOccupiedAndEffective;
-    private _occ6  = [6] call _fnc_isSlotOccupiedAndEffective;
-    private _occ8  = [8] call _fnc_isSlotOccupiedAndEffective;
-    private _occ5  = [5] call _fnc_isSlotOccupiedAndEffective;
-
-    (FTCS_MENU_Platoon_Scouts select 1) set [6, if (_occ11) then { "0" } else { "1" }]; // Left Flank (Slot 11)
-    (FTCS_MENU_Platoon_Scouts select 2) set [6, if (_occ12) then { "0" } else { "1" }]; // Right Flank (Slot 12)
-    (FTCS_MENU_Platoon_Scouts select 3) set [6, if (_occ7)  then { "0" } else { "1" }]; // Front Left (Slot 7)
-    (FTCS_MENU_Platoon_Scouts select 4) set [6, if (_occ6)  then { "0" } else { "1" }]; // Front Center (Slot 6)
-    (FTCS_MENU_Platoon_Scouts select 5) set [6, if (_occ8)  then { "0" } else { "1" }]; // Front Right (Slot 8)
-    (FTCS_MENU_Platoon_Scouts select 6) set [6, if (_occ5)  then { "0" } else { "1" }]; // Rear (Slot 5)
-};
-
-// Update Squad-Level Scout Screen Menu (FTCS_MENU_ScoutScreen_Deploy)
-if (!isNil "FTCS_MENU_ScoutScreen_Deploy") then {
-    private _occ11 = [11] call _fnc_isSlotOccupiedAndEffective;
-    private _occ12 = [12] call _fnc_isSlotOccupiedAndEffective;
-    private _occ6  = [6] call _fnc_isSlotOccupiedAndEffective;
-    private _occ7  = [7] call _fnc_isSlotOccupiedAndEffective;
-    private _occ8  = [8] call _fnc_isSlotOccupiedAndEffective;
-    private _occ5  = [5] call _fnc_isSlotOccupiedAndEffective;
-
-    (FTCS_MENU_ScoutScreen_Deploy select 1) set [6, if (_occ11) then { "0" } else { "1" }]; // Slot 11
-    (FTCS_MENU_ScoutScreen_Deploy select 2) set [6, if (_occ12) then { "0" } else { "1" }]; // Slot 12
-    (FTCS_MENU_ScoutScreen_Deploy select 3) set [6, if (_occ6)  then { "0" } else { "1" }]; // Slot 6
-    (FTCS_MENU_ScoutScreen_Deploy select 4) set [6, if (_occ7)  then { "0" } else { "1" }]; // Slot 7
-    (FTCS_MENU_ScoutScreen_Deploy select 5) set [6, if (_occ8)  then { "0" } else { "1" }]; // Slot 8
-    (FTCS_MENU_ScoutScreen_Deploy select 6) set [6, if (_occ5)  then { "0" } else { "1" }]; // Slot 5
-};
-
-// Update Road March Column Layout Menu: Compact option is enabled ONLY while a
-// road march column is active (live anchor) AND the current layout is STAGGERED.
-// Once compacted, the option disables itself; re-ordering Staggered re-enables it.
-if (!isNil "FTCS_MENU_RoadMarchLayout") then {
-    private _pltIdM = missionNamespace getVariable ["FTCS_Player_Platoon_ID", 1];
-    private _anchorM = missionNamespace getVariable [format ["FTCS_Road_Anchor_PLT_%1", _pltIdM], createHashMap];
-    private _roadActive = count (_anchorM getOrDefault ["roadPath", []]) >= 2;
-    private _layout = _anchorM getOrDefault ["columnLayout", "STAGGERED"];
-    private _roadLayout = (missionNamespace getVariable [format ["FTCS_Road_Anchor_PLT_%1", _pltIdM], createHashMap]) getOrDefault ["columnLayout", "STAGGERED"];
-    private _trailAnchorM = missionNamespace getVariable [format ["FTCS_Trail_Anchor_PLT_%1", _pltIdM], createHashMap];
-    private _trailActive = count (_trailAnchorM getOrDefault ["trailPath", []]) >= 2;
-    private _trailLayout = _trailAnchorM getOrDefault ["columnLayout", "STAGGERED"];
-    private _edgeSteps = _anchorM getOrDefault ["edgeMarginSteps", 0];
-    // Rows: 0=title, 1=staggered, 2=left, 3=right, 4=trail, 5=compact,
-    //       6=push, 7=pull, 8=reset
-    // Row 5 = Compact Column: enabled with a road column in STAGGERED/COMPACT
-    // layout, OR with an active leader-trail column not yet compacted (trail
-    // double-lane compact router in fn_applyCommandToTarget PLT_ROAD_COMPACT).
-    // DISABLED under single-shoulder LEFT/RIGHT road columns (already
-    // single-file, nothing to compact).
-    private _compactAllowed = (_roadActive && { _roadLayout in ["STAGGERED", "COMPACT"] })
-                           || (_trailActive && { _trailLayout == "STAGGERED" });
-    (FTCS_MENU_RoadMarchLayout select 5) set [6, if (_compactAllowed) then { "1" } else { "0" }];
-    // Rows 2/3 = single-shoulder columns (LEFT/RIGHT): ALWAYS enabled - they
-    // deploy the full road pipeline with a forced side, no prior staggered
-    // column required (dispatcher handles both fresh-order and re-chain paths)
-    (FTCS_MENU_RoadMarchLayout select 2) set [6, "1"];
-    (FTCS_MENU_RoadMarchLayout select 3) set [6, "1"];
-    // Rows 6-8 = stepped edge margin controls (road-world only): push available
-    // while below the 4-step cap; pull-in and reset only while off-road
-    private _rowPush = FTCS_MENU_RoadMarchLayout select 6;
-    _rowPush set [6, if (_roadActive && { _edgeSteps < 4 }) then { "1" } else { "0" }];
-    _rowPush set [0, if (_edgeSteps > 0) then {
-        format ["6. Push Out From Road (+3m) [OUT x%1/4]", _edgeSteps]
-    } else {
-        "6. Push Out From Road (+3m)"
-    }];
-    (FTCS_MENU_RoadMarchLayout select 7) set [6, if (_roadActive && { _edgeSteps > 0 }) then { "1" } else { "0" }];
-    (FTCS_MENU_RoadMarchLayout select 8) set [6, if (_roadActive && { _edgeSteps > 0 }) then { "1" } else { "0" }];
-
-    // ------------------------------------------------------------------
-    // Squad & Scout Directives hub + Squad Orders submenus (dynamic rebuild)
-    // One hub entry per doctrinal squad (3 or 4, real doctrine names) plus the
-    // scouts row; each Squad Orders submenu shows the movement rows only when a
-    // commander target is currently marked (Targeting class), and highlights
-    // Rejoin when the squad is detached/pinned from its formation slot.
-    // ------------------------------------------------------------------
-    // PHASE 8b: squad EXISTENCE comes from the registry ("squadId"), so the hub
-    // shows exactly the squads that are actually registered. The doctrine tree
-    // is consulted ONLY for the display caption (Point 18: label, not identity).
-    private _pltIdD = missionNamespace getVariable ["FTCS_Player_Platoon_ID", 1];
-    private _pltKeyD = format ["PLT_%1", _pltIdD];
-    private _platoonsMapD = FTCS_Company_Data getOrDefault ["platoons", createHashMap];
-    private _pltDataD = _platoonsMapD getOrDefault [_pltKeyD, createHashMap];
-    private _parsedSquadsD = _pltDataD getOrDefault ["parsedSquads", createHashMap];
-    private _regSquadIds = createHashMap;
-    { if (((_y) getOrDefault ["platoonId", -1]) == _pltIdD) then { _regSquadIds set [(_y) getOrDefault ["squadId", ""], true]; }; } forEach FTCS_Groups_Registry_Table;
-
-    // Hub rebuild: rows 2-5 map to squads 1-4 (show only existing doctrinal squads)
-    private _sqdOrder = ["_1", "_2", "_3", "_4"];
-    for "_si" from 1 to 4 do {
-        private _sqdKeyD = format ["SQD_%1_%2", _pltIdD, _si];
-        private _sDataD = _parsedSquadsD getOrDefault [_sqdKeyD, createHashMap];
-        private _hasSquadD = (_sqdKeyD in _regSquadIds);
-        private _hubRow = FTCS_MENU_SquadDirectives select (1 + _si);
-        private _doctName = _sDataD getOrDefault ["name", format ["Squad %1", _si]];
-        _hubRow set [0, format ["%1. %2", _si + 1, _doctName]];
-        _hubRow set [6, if (_hasSquadD) then { "1" } else { "0" }];
-    };
-
-    // Squad Orders submenus rebuild (rows: 0=title, 1=mark, 2-4=movement, 5-7=in-formation, 8=rejoin)
-    // PER-SQUAD gating: the movement rows enable state mirrors the squad's OWN
-    // captured target (any of its teams carrying "squadTarget"), never the
-    // global commander target - one squad's capture cannot unlock another
-    // squad's movement rows. Same rule as the fn_initCommandingMenus builder.
-    for "_si" from 1 to 4 do {
-        private _menuArr = missionNamespace getVariable [format ["FTCS_MENU_SquadOrders_%1", _si], []];
-        if (count _menuArr >= 9) then {
-            // Resolve this squad's bound teams from the parsed doctrine data
-            private _sqdKeyD = format ["SQD_%1_%2", _pltIdD, _si];
-            private _sDataD = _parsedSquadsD getOrDefault [_sqdKeyD, createHashMap];
-            private _teamsD = _sDataD getOrDefault ["tacticalTeams", createHashMap];
-            if (count _teamsD == 0) then { _teamsD = _sDataD getOrDefault ["teams", createHashMap]; };
-
-            // Squad owns a target when ANY of its team registry entries (or the
-            // squad-level group fallback) carries a populated "squadTarget"
-            private _sqdHasTgt = false;
-            {
-                private _grpD = (_y) getOrDefault ["group", grpNull];
-                if (!isNull _grpD) then {
-                    private _eD = FTCS_Groups_Registry_Table getOrDefault [groupId _grpD, createHashMap];
-                    if (count (_eD getOrDefault ["squadTarget", []]) >= 8) exitWith { _sqdHasTgt = true; };
-                };
-            } forEach _teamsD;
-            if (!_sqdHasTgt) then {
-                private _sqdGrpD = _sDataD getOrDefault ["group", grpNull];
-                if (!isNull _sqdGrpD) then {
-                    private _eD = FTCS_Groups_Registry_Table getOrDefault [groupId _sqdGrpD, createHashMap];
-                    if (count (_eD getOrDefault ["squadTarget", []]) >= 8) then { _sqdHasTgt = true; };
-                };
-            };
-
-            (_menuArr select 0) set [0, format ["Squad Orders - Squad %1%2", _si, if (_sqdHasTgt) then { " [TGT MARKED]" } else { "" }]];
-            for "_ri" from 2 to 4 do {
-                (_menuArr select _ri) set [6, if (_sqdHasTgt) then { "1" } else { "0" }];
-            };
-        };
-    };
-};
+// Refresh every dynamic menu flag before showing. Single owner of the flags is
+// fn_commandMenusRefresh: it reads the registry only, skips a concurrent call by
+// its own re-entrancy guard, and the arrays it protects are already correct.
+[_pltId] call FTCS_fnc_commandMenusRefresh;
 
 showCommandingMenu _menuName;

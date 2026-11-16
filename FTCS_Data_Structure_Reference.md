@@ -73,7 +73,18 @@ missionNamespace
 ├── FTCS_Road_Anchor_Gen_PLT_1 .. 4    (NUMBER: Generación del ancla de road march — cada orden nueva invalida hilos previos)
 ├── FTCS_Trail_Anchor_PLT_1 .. 4       (HashMap: Ancla de columna de estela por pelotón: anchorPos,
 │                                        trailPath [ARRAY de [posATL, dir] — estela grabada del líder],
-│                                        headDist [NUMBER — arco del líder], maxTrailOffset [NUMBER],
+│                                        headDist [NUMBER — arco del líder], maxTrailOffset [NUMBER,
+│                                        INFORMATIVO: el TRIM ya no corta contra él],
+│                                        trailMinSeatArc [NUMBER — arco ABSOLUTO del punto más antiguo
+│                                        que la columna ocupa todavía; -1 = la cola no ha hablado y el
+│                                        TRIM no recorta. Escritor: fn_formationsTrailQueueSync;
+│                                        lector: fn_trailTrimToArc, que lo desplaza al recortar],
+│                                        trailTailArc [NUMBER — offset más profundo con asiento este
+│                                        tick, telemetría], trailMaxOffset [NUMBER — offset más
+│                                        profundo de la columna INCLUYENDO los grupos que aún
+│                                        esperan; suelo DURO del TRIM], trimCushion [NUMBER — metros
+│                                        conservados detrás de trailMinSeatArc, default 100],
+│                                        trimEvents [NUMBER — nº de TRIM ejecutados],
 │                                        lastAnchorMovePos [ATL], generation [NUMBER];
 │                                        registro en FTCS_Groups_Registry_Table: trailOffsetDist / trailTargetPos /
 │                                        trailTangentDir / movingMode "FOLLOWING_TRAIL")
@@ -355,9 +366,23 @@ n      │     squad). Persistente: solo una nueva orden de formación la sobres
       ├── "trailOffsetDist"   : SCALAR           -> Arco doctrinal de la columna de estela (metros detrás del líder).
       │     Escritor único: fn_trailColumnSet (al formar la columna) y fn_formationsTrailCompactColumn
       │     (al compactar). NO es un asiento fijo por grupo: es la fuente de la cadena de cola.
-      ├── "trailSlotIndex"    : SCALAR           -> Asiento NATURAL del grupo, round(trailOffsetDist / recordStep).
-      │     Lo lee fn_formationsGroupFollowTrail. Los grupos que ya han cruzado un corte (un puente)
-      │     lo usan directamente; ningún otro escritor debe tocarlo (regla de escritor único).
+      │     INVARIANTE DE UNICIDAD: dos grupos de la misma columna nunca pueden compartir el
+      │     MISMO valor (la cola impone `ceil((mío − delante)/recordStep)` con mínimo 1 índice,
+      │     así que un empate se convierte en 2 m forzados). El compact del trail da a cada
+      │     miembro de la pareja un arco propio (+1 m el segundo) por esta razón.
+      ├── "trailShoulderOffset" : SCALAR         -> Desplazamiento lateral en metros perpendicular a la
+      │     tangente de la traza (±0.75 = doble carril compacto; 0 = fila india).
+      │     Escritores: fn_trailColumnSet (0 al formar columna) y fn_formationsTrailCompactColumn
+      │     (fija/limpia el valor). Consumidor único: fn_formationsGroupFollowTrail, que desplaza
+      │     el punto objetivo con `getPos` sobre la tangente del punto alcanzado.
+      ├── "trailLaneTargetIdx" : SCALAR          -> Índice de `trailPath` al que el grupo está caminando
+      │     AHORA (-1 = ninguno todavía). Escritor único: fn_formationsGroupFollowTrail (lo renueva al
+      │     llegar); fn_trailColumnSet y fn_formationsTrailCompactColumn lo RESEMBRAN a -1 al cambiar
+      │     el techo del grupo; fn_trailAdvanceAnchor lo RENUMERA al recortar la cola (TRIM).
+      ├── "trailSlotIndex"    : SCALAR           -> RESERVADO / SIN ESCRITOR. Antiguo asiento natural del
+      │     grupo. fn_formationsGroupFollowTrail aún lo lee como preferente sobre el asiento natural:
+      │     si alguna función futura lo sembrara, congelaría los asientos de la columna para siempre.
+      │     No escribirlo sin revisar antes ese consumidor.
       ├── "trailQueueIndex"   : SCALAR           -> Asiento de COLA publicado por fn_formationsTrailQueueSync
       │     (clase Movement). Sólo se escribe para los grupos que esperan tras un corte; -1 = sin asiento
       │     válido (se mantienen en su posición). Consumidor previsto: fn_formationsGroupFollowTrail.
@@ -366,11 +391,10 @@ n      │     squad). Persistente: solo una nueva orden de formación la sobres
       ├── "trailQueueTipIdx"  : SCALAR           -> maxIdx de la traza grabada en este tick (tope global de la
       │     columna). Escritor único: fn_formationsTrailQueueSync. Sirve para que el consumidor nunca pida un
       │     índice que aún no existe en trailPath.
-      ├── "trailCursorIdx"    : SCALAR           -> CARRIL: último índice de `trailPath` que el grupo ha PISADO
-      │     de verdad. Escritor único: fn_formationsGroupFollowTrail (avanza +1 al llegar al punto).
-      │     Se siembra a -1 en fn_trailColumnSet en cada nueva orden. Consumidor: el propio bucle, que
-      │     ordena `move` al índice cursor+1 (acotado por el asiento de cola), NUNCA al asiento directo:
-      │     eso es lo que impide que el grupo corte camino y se salte puntos de la traza.
+      ├── "trailCursorIdx"    : SCALAR           -> RESERVADO / SIN CONSUMIDOR (compatibilidad). El carril
+      │     actual no lo usa: el progreso vive en `trailLaneTargetIdx`, que se renueva sólo al alcanzar
+      │     el punto (look-ahead de 3 índices). fn_trailAdvanceAnchor lo renumera al recortar la cola por
+      │     si alguna versión futura vuelve a leerlo.
       │
       └── "squadTarget"       : ARRAY (tupla target de 8 campos + opcional marca temporal)
             Blanco capturado PROPIO de esta escuadra mediante "Mark Target"

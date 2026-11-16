@@ -87,6 +87,7 @@ class CfgFunctions
             class roadReanchor {};
             class trailAdvanceAnchor {};
             class trailIndexAtArc {};
+            class trailTrimToArc {};
         };
 
         class Targeting
@@ -123,6 +124,11 @@ class CfgFunctions
             class initCommandingMenus {};
             class applyCommandToTarget {};
             class openSubordinateMenu {};
+        };
+
+        class UI
+        {
+            class commandMenusRefresh {};
         };
 
         class Spawning

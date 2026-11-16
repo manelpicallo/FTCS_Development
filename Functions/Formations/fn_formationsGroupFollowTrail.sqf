@@ -223,8 +223,23 @@ while { ((_group getVariable ["FTCS_TrailThread_ID", -1]) == _threadID) &&
     private _maxIdx = (count _trailPath) - 1;
     private _headDist = _anchor getOrDefault ["headDist", 0];
     if (!(_headDist isEqualType 0) || { _headDist < 0 }) then { _headDist = 0; };
+    // SEAT MISSING FROM THE PATH is a DIFFERENT state from "not walked yet".
+    //
+    // `headDist >= _offsetDist` only says the leader has walked this depth; it does
+    // not say the POINT is still in `trailPath`. When the path is shorter than the
+    // requested arc (trim equilibrium, a jump, a fresh anchor) `trailIndexAtArc`
+    // saturates at the last index and the group would sit on it forever - the RPT
+    // showed three groups pinned at `max=94` while holding offsets 189/200/217.
+    // Detect it explicitly so the recovery below can act instead of waiting.
+    // `trailIndexAtArc` saturates at the last index when the requested arc is past
+    // the end, so "the index we got" alone cannot tell "exact last point" from
+    // "clamped". `_headDist` is the trail's full arclength by construction (the
+    // recorder grows it by exactly each appended segment), so the comparison below
+    // is the cheap equivalent: the requested arc must fit inside the recorded path.
     private _naturalIdx = -1;
+    private _pathCoversOffset = false;
     if (_headDist >= _offsetDist) then {
+        _pathCoversOffset = true;
         _naturalIdx = [_trailPath, _headDist - _offsetDist] call FTCS_fnc_trailIndexAtArc;
     };
 
@@ -243,6 +258,23 @@ while { ((_group getVariable ["FTCS_TrailThread_ID", -1]) == _threadID) &&
         _queuedIdx
     } else {
         if ((_slotIdxStored isEqualType 0) && { _slotIdxStored >= 0 }) then { _slotIdxStored } else { _naturalIdx }
+    };
+
+    // TAIL FALLBACK: this group has NO seat anywhere in the file, yet the path holds
+    // at least two walkable points. It then walks to the OLDEST surviving point
+    // (index 0) instead of freezing where it was placed - that freeze is how the tail
+    // was "lost" while the leader marched away (RPT 14:37: three groups pinned at
+    // `max=94` holding offsets 189/200/217). Index 0 is ground the leader really
+    // walked and is strictly behind every other seat, so the group rejoins the file
+    // in order without cutting corners. The trim now protects the full column depth,
+    // so this is a safety net, not the normal path.
+    private _noSeatAtAll = (!_inQueue && { !_queueSpoke } && { _naturalIdx < 0 });
+    if (_noSeatAtAll && { _maxIdx >= 1 }) then {
+        _slotIndex = 0;
+        if (missionNamespace getVariable ["FTCS_Debug_Mode", false]) then {
+            diag_log format ["[FTCS][TRAIL][LANE] *** '%1' off=%2 has no seat in a %3-point path -> tail fallback idx 0",
+                _groupID, (round _offsetDist), _maxIdx + 1];
+        };
     };
 
     // HOLD: the leader has not walked this group's depth yet, so the point its seat
@@ -385,18 +417,31 @@ while { ((_group getVariable ["FTCS_TrailThread_ID", -1]) == _threadID) &&
 
         // TIMEOUT: a point can be truly unreachable (inside a building, on a rock).
         // It does NOT fire while the group waits at its seat: that is queuing.
+        //
+        // SKIP ONE POINT, NEVER JUMP TO THE SEAT. Releasing the group straight to
+        // `_slotIndex` looked like a clean escape but it handed the engine a target
+        // tens of metres ahead: Arma paths the SHORTEST way there, so the group cut
+        // across the terrain and never stepped on the intermediate recorded points -
+        // exactly the "they overtake the whole file" symptom. Stepping one index per
+        // timeout keeps the lane invariant (every point is walked in order) and still
+        // recovers: a truly blocked index is skipped after `_stuckTimeout` seconds.
+        //
+        // `_targetIdx` is also never allowed PAST the seat: the clamp below uses it
+        // as the ceiling, and the queue must stay the only owner of that number.
         private _stuckKey = format ["FTCS_TrailLaneStuck_%1", _groupID];
         private _stuckSince = _group getVariable [_stuckKey, -1];
+        private _stuckTimeout = 20;
         if (_targetIdx >= _slotIndex) then {
             _group setVariable [_stuckKey, -1];
         } else {
             if (_stuckSince < 0) then {
                 _group setVariable [_stuckKey, time];
             } else {
-                if ((time - _stuckSince) > 20) then {
-                    diag_log format ["[FTCS][TRAIL][LANE] *** '%1' stuck at idx %2 for %3s -> skipping one point",
-                        _groupID, _targetIdx, round (time - _stuckSince)];
-                    _targetIdx = (_targetIdx + 1) min _maxIdx;
+                if ((time - _stuckSince) > _stuckTimeout) then {
+                    private _nextIdx = ((_targetIdx + 1) min _slotIndex) min _maxIdx;
+                    diag_log format ["[FTCS][TRAIL][LANE] *** '%1' stuck at idx %2 for %3s -> skipping to %4 (seat %5)",
+                        _groupID, _targetIdx, round (time - _stuckSince), _nextIdx, _slotIndex];
+                    _targetIdx = _nextIdx;
                     [_groupID, "trailLaneTargetIdx", _targetIdx] call FTCS_fnc_registrySet;
                     _group setVariable [_stuckKey, time];
                 };

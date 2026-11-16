@@ -30,6 +30,25 @@ Las fases doctrinales (FM 3-21.8) se estructuran en 3 grandes etapas:
 - Formaciones de Escuadra: Soportadas hasta 5 sub-equipos (1 Líder + hasta 4 grupos subordinados). En Fase 1 (APPROACH) los flancos de cuña/Vee adoptan dinámicamente ECHELON_RIGHT y ECHELON_LEFT para escalonamiento de marcha en columna relajada. En Fase 2 (CONTACT LIKELY / OVERWATCH) las escuadras recuperan su geometría táctica abierta completa (WEDGE/LINE) en disciplina estricta AWARE.
 - Resto de opciones: Visibles en UI pero desactivadas (gris claro / enable="0") hasta su implementación.
 
+[PROPIEDAD DEL ESTADO DE LOS MENÚS - fn_commandMenusRefresh]
+- Los menús son ARRAYS estáticos creados una vez por fn_initCommandingMenus. Su
+  estado vivo (campo 6 = enable "1"/"0", y ciertas etiquetas dinámicas) lo escribe
+  UN ÚNICO dueño: `Functions/UI/fn_commandMenusRefresh.sqf`
+  (`[pltId] call FTCS_fnc_commandMenusRefresh`).
+- fn_openSubordinateMenu YA NO recalcula flags: elige QUÉ menú mostrar y lo muestra.
+  Antes de mostrarlo llama al refresco, de modo que el menú siempre abre con el
+  estado actual del registro.
+- fn_applyCommandToTarget llama al refresco al terminar cada cambio de "mundo de
+  marcha" (Road Column, Trail Column, Road Compact, Road Column LEFT/RIGHT), para
+  que las filas dependientes (p. ej. Compact) reflejen el nuevo estado SIN tener que
+  cerrar y reabrir el menú.
+- Guard de reentrancia: `FTCS_Menu_RefreshBusy` (missionNamespace). Una segunda
+  llamada concurrente se salta el refresco (los arrays ya están correctos).
+- Filas que este refresco gobierna: Scout slots (pelotón y escuadra), Follow Mode
+  REL/ABS, Road March Layout (filas 2,3,5,6,7,8 = shoulders, COMPACT, edge margin),
+  Squad Directives hub (existencia por registro) y Squad Orders 1..4 (filas 2-4
+  habilitadas solo con `squadTarget` propio de la escuadra).
+
 ================================================================================
 FASE 1: APPROACH PHASE (Desplazamiento / Sin Contacto) [FASE ACTIVA POR DEFECTO]
 ================================================================================

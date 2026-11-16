@@ -98,6 +98,19 @@
                  second writer would make one field mean two things (the single-writer
                  rule that fixed the scrambled order at the bridge).
 
+     ANCHOR FIELDS
+         WRITE : trailMinSeatArc  - ARCLENGTH of the oldest point the column still
+                                    occupies (headDist - deepest offset actually
+                                    released). -1 = nothing to report, the trim holds.
+         WRITE : trailTailArc     - the deepest offset seen this tick (telemetry and
+                                    the trim's zero-guard).
+                  This pass is the ONLY place where the whole column (offset +
+                  released seat) is known at once, which is why the TRIM's floor is
+                  published from here and not from the recorder
+                  (fn_trailTrimToArc reads "trailMinSeatArc"). It is an ABSOLUTE
+                  arclength, shifted by the trim itself, so it survives a trim and
+                  keeps addressing the same ground on the next tick.
+
      SENTINELS
          trailQueueHasSeat = false  -> this group must HOLD GROUND this tick
          trailQueueIndex   = -1     -> "no valid seat yet" (a column that started on
@@ -217,6 +230,18 @@ for "_i" from 1 to (_n - 1) do {
 private _published = 0;
 private _frontIdx = -1;
 private _frontDist = -1;
+// TRIM FLOOR: deepest offset that actually holds a seat this tick. The column's
+// oldest occupied point is at arc (headDist - _deepestSeatedOff). Read by
+// fn_trailTrimToArc; -1 when no group of this platoon is seated yet.
+private _deepestSeatedOff = -1;
+// TRIM FLOOR (protection floor): deepest offset of the column THAT IS STILL
+// WAITING. A group without a seat needs trail that does not exist yet, so the trim
+// must never drop it: the follower releases it the moment its depth is walked. Cut
+// against the seated offset alone and the trim ate exactly the metres the waiting
+// tail was about to walk (RPT 14:26-14:27: path trimmed to 83-99 points ~170-200 m
+// while the column needs 217 m, so Mortars/Guide held for 32 MINUTES).
+// `_frontDist` is updated for EVERY car, seated or not (see the chain note below).
+private _deepestAnyOff = -1;
 // Number of cars already walked by the chain. This - NOT the value of `_frontIdx` -
 // decides whether a car has a predecessor, because `-1` is also a legal seat
 // ("this car is holding"). 0 = first car of the column.
@@ -281,6 +306,31 @@ private _carsDone = 0;
         private _maxSeat = _frontSeat - _gapIdx;
         if (_seat > _maxSeat) then { _seat = _maxSeat; };
 
+        // COMPRESSED FILE: SPACING MUST YIELD TO ORDER (Lesson 33).
+        //
+        // While the column is bunched against the trail tip, `frontSeat - gap` can
+        // be NEGATIVE even though BOTH cars are legitimately in the file: the car in
+        // front only has a few indexes left, and this car's doctrinal gap is wider
+        // than that. Demanding the full gap then drops the car out of the column -
+        // and a car that is out of the column never gets another chance until the
+        // leader walks again. Verified in the RPT:
+        //
+        //     'Mortar Section'          off=200 seat=2   (max=106) -> SEAT
+        //     'HQ (Guide & Security)'   off=217 seat=106 (cap=2)   -> HOLDS
+        //                                                 ^ 2 - ceil(17/2)=9 -> -7
+        //
+        // The answer is the MINIMUM ORDER (one index behind the car in front), not
+        // "hold forever": the group enters the file immediately and recovers its
+        // doctrinal gap by itself as soon as the trail grows past it. Losing a group
+        // is always worse than a temporarily short gap.
+        if (_seat < 0 && { _frontSeat >= 1 }) then {
+            _seat = _frontSeat - 1;
+            if (missionNamespace getVariable ["FTCS_Debug_Mode", false]) then {
+                diag_log format ["[FTCS][TRAIL][QUEUE] '%1' off=%2 compressed (cap=%3 gap=%4) -> MIN ORDER seat=%5",
+                    _grpId, _off, _frontSeat, _gapIdx, _seat];
+            };
+        };
+
         if (_seat < 0) then { _seat = -1; };
     };
 
@@ -299,6 +349,7 @@ private _carsDone = 0;
         [_grpId, "trailQueueIndex", _seat] call FTCS_fnc_registrySet;
         [_grpId, "trailQueueHasSeat", true] call FTCS_fnc_registrySet;
         _published = _published + 1;
+        if (_off > _deepestSeatedOff) then { _deepestSeatedOff = _off; };
         if (missionNamespace getVariable ["FTCS_Debug_Mode", false]) then {
             diag_log format ["[FTCS][TRAIL][QUEUE] '%1' off=%2 seat=%3 (max=%4) -> SEAT",
                 _grpId, _off, _seat, _maxIdx];
@@ -323,15 +374,38 @@ private _carsDone = 0;
     _frontIdx = _seat;
     _frontDist = _off;
     _carsDone = _carsDone + 1;
+    if (_off > _deepestAnyOff) then { _deepestAnyOff = _off; };
 
     // Global cap of the column, published for the follower loop.
     [_grpId, "trailQueueTipIdx", _maxIdx] call FTCS_fnc_registrySet;
 } forEach _sorted;
 
+// --- 4. Publish the TRIM FLOOR into the anchor --------------------------------
+// `headDist - offset` is the arclength of the OLDEST point the column occupies, in
+// the SAME absolute frame the trim uses (headDist is shifted by exactly the trimmed
+// length, and so is this value).
+//   - no car seated -> -1: the trim HOLDS, because nothing proves which points are
+//     still needed (a column that has just started has no tail to drop).
+//   - the deepest offset whose seat is clamped at the column ceiling (bridge held
+//     open) would place the floor BEYOND the recorded trail; the trim's cushion
+//     absorbs it, and "_tailArc > headDist" is clamped to headDist here anyway.
+// The floor is the DEEPER of the two: a waiting group protects its own depth just
+// like a seated one (it is the very next car to be released), so the trim never
+// cuts ground that is about to be walked.
+private _protectOff = (_deepestSeatedOff max _deepestAnyOff);
+private _tailArc = -1;
+if (_protectOff >= 0) then {
+    _tailArc = (_headDist - _protectOff) min _headDist;
+    if (_tailArc < 0) then { _tailArc = 0; };
+};
+_anchor set ["trailMinSeatArc", _tailArc];
+_anchor set ["trailTailArc", _deepestSeatedOff];
+_anchor set ["trailMaxOffset", _protectOff];
+
 if (missionNamespace getVariable ["FTCS_Debug_Mode", false]
     && { missionNamespace getVariable ["FTCS_Debug_Trace", false] }) then {
-    diag_log format ["[FTCS][TRAIL][QUEUE] plt %1: maxIdx=%2 cars=%3 seated=%4",
-        _pltId, _maxIdx, count _sorted, _published];
+    diag_log format ["[FTCS][TRAIL][QUEUE] plt %1: maxIdx=%2 cars=%3 seated=%4 tailArc=%5",
+        _pltId, _maxIdx, count _sorted, _published, _tailArc];
 };
 
 _published

@@ -721,6 +721,10 @@ switch (_commandCode) do {
         private _modeStr = if (_roadCategory == "ROAD") then { "STAGGERED COLUMN (Dual Shoulder)" } else { "TRAIL COLUMN (Single File)" };
         systemChat format ["[ROAD MARCH] Platoon deployed in %1 along %2 (Width %3m).", _modeStr, _roadCategory, round _roadWidth];
         hint parseText format ["<t color='#00FFCC'>[ROAD MARCH ACTIVATED]</t><br/><t color='#FFFFFF'>Technique:</t> %1<br/><t color='#FFAA00'>Road Width:</t> %2m<br/><t color='#AAAAAA'>Troops staggered on shoulders and following route.</t>", _modeStr, round _roadWidth];
+
+        // The march world just changed: refresh the menu flags now, so the Compact
+        // row is already enabled the next time Layout is displayed.
+        [_pltId] call FTCS_fnc_commandMenusRefresh;
     };
 
     // =========================================================================
@@ -821,6 +825,10 @@ switch (_commandCode) do {
 
         systemChat format ["[TRAIL COLUMN] Platoon chained on leader track (%1 teams).", _chainedCount];
         hint parseText "<t color='#00FFCC'>[TRAIL COLUMN ACTIVATED]</t><br/><t color='#FFFFFF'>Trajectory:</t> Leader's own track<br/><t color='#AAAAAA'>Every team inherits the exact terrain line the leader walked.</t>";
+
+        // Trail anchor now exists: this is what enables the Compact row for the
+        // trail world without reopening the menu from scratch.
+        [_pltIdT] call FTCS_fnc_commandMenusRefresh;
     };
 
     // =========================================================================
@@ -865,6 +873,9 @@ switch (_commandCode) do {
 
         [_pltIdC, "BOTH"] call FTCS_fnc_formationsRoadCompactColumn;
         hint parseText "<t color='#00FFCC'>[ROAD COMPACT]</t><br/><t color='#FFFFFF'>Staggering removed.</t><br/><t color='#AAAAAA'>Left and right shoulder teams march at matching distances (pace + 2m gap).</t>";
+
+        // columnLayout changed: refresh so the Compact row reflects the new layout.
+        [_pltIdC] call FTCS_fnc_commandMenusRefresh;
     };
 
     // =========================================================================
@@ -888,6 +899,9 @@ switch (_commandCode) do {
             private _scope = if (_forcedSide == -1) then { "LEFT" } else { "RIGHT" };
             [_pltIdS, _scope] call FTCS_fnc_formationsRoadCompactColumn;
             hint parseText format ["<t color='#00FFCC'>[ROAD COLUMN: %1]</t><br/><t color='#FFFFFF'>Single-shoulder column re-chained.</t><br/><t color='#AAAAAA'>All teams moved to the %2 shoulder (standard pacing).</t>", _sideStr, toLower _sideStr];
+
+            // LEFT/RIGHT layout: the Compact row must go grey immediately.
+            [_pltIdS] call FTCS_fnc_commandMenusRefresh;
         } else {
             // PATH 2 - fresh order: route through PLT_ROAD_COLUMN with the forced side
             // injected, so the full pipeline (path, anchor, AI, threads, watchdog) runs

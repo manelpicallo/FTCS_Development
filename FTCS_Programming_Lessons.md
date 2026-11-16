@@ -64,6 +64,17 @@
 | 21 | 2026-11-15 | Lesson | A queue enforces ORDER, never SPACING: forcing `frontIdx - 1` collapsed the column to consecutive points. Round arc->index to the NEAREST point, keep the arc-derived seat, use `-1` only as a collision guard | `fn_trailIndexAtArc.sqf`, `fn_formationsTrailQueueSync.sqf` |
 | 22 | 2026-11-15 | Arch/Design | A trail column walks the trail POINT BY POINT: `trailCursorIdx` advances +1 on arrival, the seat is a CEILING not a destination. Fixes corner-cutting and makes the bridge crossing a consequence, not a special case | `fn_formationsGroupFollowTrail.sqf`, `fn_trailColumnSet.sqf` |
 | 23 | 2026-11-15 | Lesson | A 1-index lane stutters (target = `cursor+1` + 1 s tick makes the AI brake every 2 m) and a doctrinal seat does not stop overtaking. Fix: cursor = POSITION (while loop over reached points), LOOK-AHEAD target, 0.35 s tick, catch-up scan, and `seat(k) = min(seat(k-1), doctrinal(k))` | `fn_formationsGroupFollowTrail.sqf`, `fn_formationsTrailQueueSync.sqf` |
+| 24 | 2026-11-16 | Lesson | Two groups may NEVER share the same `trailOffsetDist`: the queue's `_gapIdx` floor (>= 1) turns a tie into a forced 2 m step. Trail compact gives each pair member its own arclength (+1 m) and reseeds `trailLaneTargetIdx` | `fn_formationsTrailCompactColumn.sqf`, `fn_formationsTrailQueueSync.sqf` |
+| 25 | 2026-11-16 | Lesson | A stuck-group timeout must release to the SEAT (`min(_slotIndex, _maxIdx)`), never to `target+1` (retries the same failure) and never past the seat (breaks the queue's single-writer rule) | `fn_formationsGroupFollowTrail.sqf` |
+| 26 | 2026-11-16 | Lesson | A `missionNamespace` GLOBAL (`FTCS_Company_Data`) used as the receiver of `getOrDefault` raises "Undefined variable" on the NEXT line and aborts the whole function - inside a menu builder that means the menu NEVER OPENS (Compact row unreachable) | `fn_openSubordinateMenu.sqf` |
+| **PENDING-6** | 2026-11-16 | **OPEN Audit** | Grep for globals used as `getOrDefault` receivers (`FTCS_Company_Data`, `FTCS_Groups_Registry_Table`, `FTCS_Config` without `missionNamespace getVariable`); one found in `fn_openSubordinateMenu` (fixed). Audit the rest of the UI builders | all `fn_*` in Interactions/Core |
+| 27 | 2026-11-16 | Lesson + Arch/Design | The trail TRIM must cut against the OLDEST ARC THE COLUMN OCCUPIES (`trailMinSeatArc`, published by the queue), never against the doctrinal `maxTrailOffset`, and only in BATCHES (>=10 pts). A per-tick trim renumbers every persisted index continuously | `fn_trailTrimToArc.sqf` (new), `fn_trailAdvanceAnchor.sqf`, `fn_formationsTrailQueueSync.sqf`, `fn_trailColumnSet.sqf` |
+| 28 | 2026-11-16 | Lesson + Arch/Design | `private` inside a `for` body lives in the SCRIPT scope: a re-entrant menu rebuild wipes its own loop variables (20 "Undefined variable" errors in one second, menu never opens). Fix: hoist declarations + re-entrancy sentinel + extract the rebuild to `fn_commandMenusRefresh` (new `Functions/UI`) | `fn_commandMenusRefresh.sqf` (new), `fn_openSubordinateMenu.sqf`, `fn_applyCommandToTarget.sqf` |
+| 29 | 2026-11-16 | Lesson | A column resolver must filter participants with the SAME predicate as the queue (`platoonId` + `movingMode == FOLLOWING_TRAIL` + `offset > 0`). `trailOffsetDist` survives a road march, so `offset > 0` alone let ghosts steal a pair and left the last two real teams uncompacted | `fn_formationsTrailCompactColumn.sqf` |
+| 30 | 2026-11-16 | Lesson | The TRIM floor must protect the DEEPEST offset of the column INCLUDING WAITING groups (no seat yet), not only seated ones. A seated-only floor trimmed the trail to 83-99 pts (~170-200 m) while the column needs 217 m: the tail held 32 min and got a bogus seat | `fn_formationsTrailQueueSync.sqf`, `fn_trailTrimToArc.sqf`, `fn_trailColumnSet.sqf` |
+| 31 | 2026-11-16 | Lesson | A stuck-group escape must skip ONE index, never jump to the seat: `move <seat>` is a pathfinding request, so Arma takes the shortest route and the group cuts across the track ("they overtake the whole file") | `fn_formationsGroupFollowTrail.sqf` |
+| 32 | 2026-11-16 | Lesson | A memory bound may not depend on data published by a thread that runs AFTER it: the trim/record equilibrium capped the path at ~95 pts and starved the tail. Fix: registry-side guard + batch 20 + cushion 150 (seeded value must match the default) | `fn_trailTrimToArc.sqf`, `fn_trailColumnSet.sqf`, `fn_formationsGroupFollowTrail.sqf` |
+| 33 | 2026-11-16 | Lesson | In a column compressed against the trail tip, SPACING must yield to ORDER: `frontSeat - gapIdx < 0` dropped the last group out of the column forever. Fallback = 1 index behind the car in front (logged), never HOLD | `fn_formationsTrailQueueSync.sqf` |
 
 ---
 
@@ -1610,3 +1621,721 @@ of overtaking.
    neighbour.
 5. Any index-based cursor needs a CATCH-UP rule, because the agent's start position
    and the trail origin are unrelated.
+
+---
+
+## Lesson 24 — Two groups may never share the SAME `trailOffsetDist` (queue `_gapIdx` floor turns a tie into a forced 2 m step)
+
+**Date:** 2026-11-16
+**Module:** `Functions/Formations/fn_formationsTrailCompactColumn.sqf`, `Functions/Movement/fn_formationsTrailQueueSync.sqf`
+**Type:** Lesson
+
+### Symptom (static-review finding, not yet seen in a live RPT)
+
+`fn_formationsTrailCompactColumn` paired teams and gave BOTH members of a pair the
+SAME `trailOffsetDist` (the first member's), relying on `trailShoulderOffset`
+(`±0.75 m`) to place them abreast. In the queue that tie cannot survive:
+
+```sqf
+// fn_formationsTrailQueueSync.sqf
+private _gapIdx = ceil ((_off - _frontDist) / _recordStep);
+if (_gapIdx < 1) then { _gapIdx = 1; };     // <- the floor
+...
+private _maxSeat = _frontSeat - _gapIdx;
+```
+
+With `_off == _frontDist`, `_gapIdx = 0` and the floor forces **1 index (~2 m)**
+behind the car in front, so the second lane is parked one recorded point back
+instead of marching abreast - the compact does not look like a double lane. It
+also makes the NEXT pair's gap smaller than doctrine (the chain measures from a
+member whose real arclength was fake), compressing the whole file.
+
+### The rule
+
+`trailOffsetDist` is the queue's ordering AND spacing key. It must be **unique per
+group inside a column**. A lateral/shoulder layout earns its effect from
+`trailShoulderOffset` only; it may NOT express "same depth" through a tie.
+
+### Correct implementation (applied)
+
+```sqf
+// distinct arclengths inside the pair window
+_entry set ["trailOffsetDist", _cursor + (_memberRank * _pairStep)];  // _pairStep = 1.0
+_entry set ["trailShoulderOffset", (_pairHalfSeparation * _side)];    // +/-0.75 m
+_entry set ["trailLaneTargetIdx", -1];   // new, LOWER ceiling -> re-pick first point
+```
+
+1 m of longitudinal split is invisible (12 % of one recorded step) yet keeps the
+queue arithmetic exact, so the pair keeps `_gapIdx = 1` naturally instead of by
+clamp.
+
+### Related rules derived
+
+1. Any function that REWRITES `trailOffsetDist` must reseed `trailLaneTargetIdx = -1`
+   for the groups it touches: the lane target is a ceiling-bound index and the new
+   ceilings are lower, so a stale target makes the group renew BACKWARDS.
+2. Groups that do NOT participate in a compaction must lose any stale
+   `trailShoulderOffset`, or they stay displaced from a previous layout.
+3. Footprint for a compact chain is the NOMINAL headcount model
+   `(men - 1) * 3 + 8` (same as `fn_trailColumnSet`), never the MEASURED
+   `leader -> rearmost` distance: the latter describes current dispersion, so a
+   team still spread out inflates the depth and pushes the column back.
+
+---
+
+## Lesson 25 — A stuck-group timeout must release to the SEAT, not to `target + 1`
+
+**Date:** 2026-11-16
+**Module:** `Functions/Formations/fn_formationsGroupFollowTrail.sqf`
+**Type:** Lesson
+
+### Symptom (static-review finding)
+
+Trail lane timeout after 20 s:
+
+```sqf
+_targetIdx = (_targetIdx + 1) min _maxIdx;   // WRONG
+```
+
+The group is stuck ON `_targetIdx` (an unreachable point: inside a building, on a
+rock). Moving the target ONE index ahead asks it for the next unreachable point,
+so the timer fires again 20 s later: the group inches forward one index at a time.
+Worse, `_targetIdx` could run PAST the seat, and the clamp
+
+```sqf
+_slotIndex = (_targetIdx min _maxIdx) max 0;
+```
+
+then replaced the QUEUE's ceiling with the loop's own guess - the single-writer
+rule (queue owns the seat) was broken from the follower.
+
+### Correct implementation (applied)
+
+```sqf
+private _releaseIdx = (_slotIndex min _maxIdx) max 0;
+_targetIdx = _releaseIdx;   // straight to my seat, never beyond it
+```
+
+The seat already exists in `trailPath` (the queue only publishes real indexes),
+so releasing there is always legal; the group skips the offending point and
+re-joins the column. The seat itself is never written by this loop.
+
+### Rules derived
+
+1. A recovery path must REACH a state that cannot re-trigger the same failure.
+   Jumping one step from a blocked spot is a retry loop, not a recovery.
+2. A consumer that only READS a field must never need to overwrite it to recover:
+   if a fallback has to change the value, the ownership of that field is wrong.
+
+---
+
+## Lesson 26 — A `missionNamespace` GLOBAL used as the receiver of `getOrDefault` throws "Undefined variable" ONE LINE LATER, and the whole function aborts (the menu never opens)
+
+**Date:** 2026-11-16
+**Module:** `Functions/Interactions/fn_openSubordinateMenu.sqf`
+**Type:** Lesson
+
+### Symptom (RPT `Arma3_x64_2026-11-16_12-32-27.rpt`)
+
+```
+12:58:01 Error in expression <1_%2", _pltIdD, _si];
+private _sDataD = _parsedSquadsD getOrDefault [_sqdKeyD, c>
+12:58:01   Error position: <_parsedSquadsD getOrDefault [_sqdKeyD, c>
+12:58:01   Error Undefined variable in expression: _parsedsquadsd
+File ...\functions\Interactions\fn_openSubordinateMenu.sqf..., line 280
+...
+12:58:01   Error Undefined variable in expression: _pltdatad
+File ...\fn_openSubordinateMenu.sqf..., line 272
+```
+
+In game: **the subordinate menu stopped opening at all**, so the Road March layout
+submenu (and therefore "Compact Column") became unreachable.
+
+### Verified root cause
+
+The hub rebuild read the company tree like this:
+
+```sqf
+private _platoonsMapD = FTCS_Company_Data getOrDefault ["platoons", createHashMap];
+```
+
+`FTCS_Company_Data` is a **`missionNamespace` global**, not an `FTCS_fnc_*`
+function and not a local. Used as the receiver of `getOrDefault` without
+`missionNamespace getVariable`, the parser raises
+
+```
+Error Undefined variable in expression: _pltdatad   (reported ONE LINE LATER)
+```
+
+because SQF reports the failure at the next assignment that consumes the chain
+(`_pltDataD`, then `_parsedSquadsD`, then `_sDataD` etc.). This is the same
+family as Lesson 16: the error names a DIFFERENT variable than the statement that
+actually failed, so the reported line is never the bug.
+
+### Why it removed the menu
+
+The broken block lives inside `if (!isNil "FTCS_MENU_RoadMarchLayout") then {...}`,
+which runs BEFORE the final `showCommandingMenu _menuName`. A runtime error that
+aborts the block leaves the script aborting before the menu is shown: the command
+menu never appears, and any row it contains (Compact Column) is unreachable no
+matter how correct its gating is.
+
+It is INTERMITTENT because the tree can be absent/half-built during the start-up
+window (menu opened from the self command net before the doctrine is applied).
+
+### Correct implementation (applied)
+
+```sqf
+private _companyTreeD = missionNamespace getVariable ["FTCS_Company_Data", createHashMap];
+if (!(_companyTreeD isEqualType createHashMap)) then { _companyTreeD = createHashMap; };
+private _platoonsMapD = _companyTreeD getOrDefault ["platoons", createHashMap];
+if (!(_platoonsMapD isEqualType createHashMap)) then { _platoonsMapD = createHashMap; };
+private _pltDataD = _platoonsMapD getOrDefault [_pltKeyD, createHashMap];
+if (!(_pltDataD isEqualType createHashMap)) then { _pltDataD = createHashMap; };
+private _parsedSquadsD = _pltDataD getOrDefault ["parsedSquads", createHashMap];
+if (!(_parsedSquadsD isEqualType createHashMap)) then { _parsedSquadsD = createHashMap; };
+```
+
+The doctrine tree is consulted ONLY for the display caption (Point 18), and the
+row gating still comes from the registry (`_hasSquadD`, `squadTarget`), so a
+missing tree degrades the LABELS ("Squad 1..4") and never enables a wrong order.
+
+### Rules derived
+
+1. A `missionNamespace` global is READ through `missionNamespace getVariable [...]`,
+   every time, including as the receiver of a fluent `getOrDefault` chain.
+   `FTCS_Company_Data ... , FTCS_Groups_Registry_Table ...` are globals, not
+   functions - grepping `^\s*private _\w+ = FTCS_(Company_Data|Groups_Registry_Table|Config)\b`
+   is the cheap audit for this class of bug.
+2. Type-guard EVERY hop of a `getOrDefault` chain that feeds UI: a runtime error
+   inside a menu builder silently removes the menu instead of degrading it
+   (Lesson 9: a bad migration fails SILENTLY).
+3. When a menu "does not open", read the RPT FIRST, not the menu arrays: an abort
+   anywhere above `showCommandingMenu` reproduces exactly the same symptom as a
+   bad menu definition.
+
+---
+
+## Lesson 27 — The trail TRIM must cut against the OLDEST ARC THE COLUMN OCCUPIES, not against the doctrinal `maxTrailOffset` (+ batch it)
+
+**Date:** 2026-11-16
+**Module:** `Functions/Roads/fn_trailTrimToArc.sqf` (new), `fn_trailAdvanceAnchor.sqf`, `Functions/Movement/fn_formationsTrailQueueSync.sqf`, `fn_trailColumnSet.sqf`
+**Type:** Lesson + Arch/Design
+
+### Symptom (RPT `Arma3_x64_2026-11-16_12-32-27.rpt`)
+
+The trim ran almost EVERY tick, 1-3 m at a time, on a path of only ~115-120 points:
+
+```
+12:48:27  Trim: dropped 1 tail points (2.84m),  path now 120 pts
+12:48:35  Trim: dropped 1 tail points (2.25m),  path now 119 pts
+12:50:37  Trim: dropped 1 tail points (2.78m),  path now 118 pts
+12:53:28  Trim: dropped 1 tail points (108.49m), path now 115 pts   <- bridge span
+```
+
+while the rear of the SAME column still held `off=189 seat=19`, `off=200 seat=13`,
+`off=217 seat=4` with `maxIdx = 117`.
+
+### Verified root cause
+
+```sqf
+private _trimLimit = _headDist - _maxOffset - 200.0;   // WRONG floor
+```
+
+1. `maxTrailOffset` is seeded ONCE by `fn_trailColumnSet` and never recomputed. The
+   compact rewrites `trailOffsetDist`; casualties and re-orders change it too. The
+   trim was cutting against a number that describes a layout that may no longer exist.
+2. With a 217 m column and a 200 m cushion the cut lands INSIDE the column: the
+   oldest points still needed by the tail are dropped, and the groups whose seat
+   falls before the new index 0 have nowhere to walk.
+3. The cushion was not a cushion at all: because `_headDist` is recomputed each tick
+   from a path that the trim itself has shortened, a 2-3 m cut per tick is a machine
+   that keeps working forever - a trim feedback loop that never lets the column settle.
+4. Every trim RENUMBERS every persisted index (`trailLaneTargetIdx`,
+   `trailCursorIdx`). A trim per tick means the whole registry is renumbered
+   continuously - which is why index-based state stayed fragile no matter how many
+   bugs were fixed one by one.
+
+### Correct design (applied)
+
+```
+fn_formationsTrailQueueSync   (sees the WHOLE column: offset + released seat)
+      publishes into the anchor:
+          trailMinSeatArc = headDist - deepestSeatedOffset      (absolute arc)
+          trailTailArc    = deepestSeatedOffset                (telemetry)
+                       ^-1  -> nothing seated, the trim HOLDS
+
+fn_trailAdvanceAnchor  calls fn_trailTrimToArc FIRST (section 0), then records
+
+fn_trailTrimToArc  (single writer of the trim)
+      trimLimit = trailMinSeatArc - trimCushion      (default cushion 100 m)
+      - drops whole head points strictly before the limit
+      - BATCHES: no trim below 10 dropped points (~20 m of march)
+      - FLOOR: never leaves fewer than 3 points
+      - shifts headDist AND the published arcs by the dropped length
+      - renumbers trailLaneTargetIdx / trailCursorIdx
+```
+
+`trailMinSeatArc` is an ABSOLUTE arclength: `headDist` drops by exactly the trimmed
+length and so does the arc, so it survives a trim and keeps addressing the same
+ground on the next tick - which is also why the trim shifts it.
+
+### Rules derived
+
+1. A memory bound (trim, cache eviction, ring buffer) must be driven by the OLDEST
+   LIVE CONSUMER POSITION, never by an assigned/nominal depth. "Assigned" goes
+   stale; "occupied" is measured every tick.
+2. Batch destructive maintenance. A 1-point-per-tick trim is worse than no trim: it
+   costs a full renumber of every persisted index for 2 m of memory.
+3. Never let a maintenance pass rewrite the value that decides when the pass runs
+   (`headDist`), without an invariant that keeps it stable: that is a feedback loop,
+   not an optimization. Here the floor (`_minKeptPts`) plus the cushion guarantees
+   `headDist` can only drop by the trimmed length in the same operation.
+4. The trim runs BEFORE recording, so the append lands in the surviving array; the
+   caller must re-read `trailPath` and `headDist` afterwards.
+
+### Known limitation (documented, accepted)
+
+`trailMinSeatArc` is published by the queue, which lives in the same thread right
+after the recorder. On the very first ticks of a march the queue may not have
+spoken yet (`-1`) and the trim holds; once a seat is published the trim starts with
+a 100 m cushion. On REORDER (compact) the offsets change but `headDist` does not, so
+the floor moves with the new layout on the next tick - which is the intended
+behaviour.
+
+---
+
+## Lesson 28 — `private` inside a `for` body lives in the SCRIPT scope: a re-entrant menu rebuild wipes its own loop variables
+
+**Date:** 2026-11-16
+**Module:** `Functions/UI/fn_commandMenusRefresh.sqf` (new), `Functions/Interactions/fn_openSubordinateMenu.sqf`, `fn_applyCommandToTarget.sqf`
+**Type:** Lesson + Arch/Design
+
+### Symptom (RPT `Arma3_x64_2026-11-16_12-32-27.rpt`, 13:42:41)
+
+Twenty errors in ONE second, spread over lines that are NOT consecutive and name
+variables that look "obviously declared":
+
+```
+Error Undefined variable in expression: _pltdatad        (line 281)
+Error Undefined variable in expression: _parsedsquadsd   (lines 291 / 309)
+Error Undefined variable in expression: _sdatad          (line 324)
+```
+
+In game: the subordinate menu never opened, so the Road March layout submenu (and
+with it **Compact Column**) was unreachable.
+
+### Verified root cause
+
+Two things together:
+
+1. **`private` does not create a per-iteration scope.** In SQF a `private` declares
+   the variable in the scope of the SCRIPT, not in the block. A `for` body that
+   declares `private _sqdKeyD = ...` re-declares the SAME script variable on every
+   iteration. That is fine while a single invocation runs.
+2. **The block was RE-ENTRANT.** It lived inline in `fn_openSubordinateMenu`, and
+   `call` from a script that is itself running (the menu rebuild issued by the addAction
+   and by the march dispatcher in the same frame) starts a second instance of the same
+   script scope. Instance B re-declares the variables instance A is still holding, and
+   when A resumes it reads `nil`.
+
+The pattern in the RPT is the fingerprint: errors on the FIRST line of the loop
+(281), then on lines declared at the TOP of its body (290/291), then on lines used
+LATER (309/324) - i.e. a body that ran twice with its `private` re-created underneath.
+
+The line number also proves the file ON DISK was the fixed one (line 281 is the
+`isEqualType` guard). The abort happened BEFORE `showCommandingMenu`, which is why
+the menu disappeared instead of degrading.
+
+### Correct design (applied)
+
+The rebuild was extracted to `fn_commandMenusRefresh` (new `Functions/UI`) with:
+
+```sqf
+// ONE declaration, before the loops; the loop bodies only ASSIGN.
+private _sqdKeyD = "";
+private _sDataD = createHashMap;
+private _hubRow = [];
+... 
+for "_si" from 1 to 4 do {
+    _sqdKeyD = format [...];
+    _sDataD = _parsedSquadsD getOrDefault [...];
+    ...
+};
+```
+
+plus a re-entrancy guard:
+
+```sqf
+if (missionNamespace getVariable ["FTCS_Menu_RefreshBusy", false]) exitWith { false };
+missionNamespace setVariable ["FTCS_Menu_RefreshBusy", true];
+... rebuild ...
+missionNamespace setVariable ["FTCS_Menu_RefreshBusy", false];
+```
+
+`fn_openSubordinateMenu` is now: resolve `_pltId` -> `[_pltId] call
+FTCS_fnc_commandMenusRefresh` -> `showCommandingMenu _menuName`. It no longer OWNS
+the flags, only displays them.
+
+`fn_applyCommandToTarget` calls the refresh at the end of every march-world change
+(ROAD_COLUMN, TRAIL_COLUMN, ROAD_COMPACT, ROAD_COLUMN_LEFT/RIGHT), so the flags are
+correct BEFORE the next menu is shown - a fresh trail column now enables Compact
+immediately instead of on the next full reopen.
+
+### Rules derived
+
+1. **Never declare `private` inside a `for`/`forEach`/`while` body whose value you
+   need after the iteration, or whose script can run re-entrantly.** Declare once,
+   assign inside.
+2. **Any function reachable from an event handler AND from a script thread is
+   re-entrant.** Either make it stateless, or guard it with a single sentinel in
+   `missionNamespace` and an `exitWith` that is safe to skip.
+3. **UI state refresh is its own responsibility.** A menu OPENER opens; a REFRESH
+   computes flags from the registry. Merging them means the flags are only ever as
+   fresh as the last time the user opened a menu (this bug).
+4. When a whole menu vanishes, suspect an abort ABOVE `showCommandingMenu`: the
+   symptom is identical to "the menu does not exist".
+
+---
+
+## Lesson 29 — A column resolver must filter its participants with the SAME test the queue uses, or a stale field steals a pair/seat
+
+**Date:** 2026-11-16
+**Module:** `Functions/Formations/fn_formationsTrailCompactColumn.sqf`
+**Type:** Lesson
+
+### Symptom (in game)
+
+Trail compact worked, **except the last two teams of the column**, which were not
+compacted (they stayed in single file / on the old offsets).
+
+### Verified root cause
+
+The participant list was built with ONE clause:
+
+```sqf
+private _offsetDist = _entry getOrDefault ["trailOffsetDist", -1];
+if (_offsetDist > 0) then { _participants pushBack [_offsetDist, _grpId]; };   // WRONG
+```
+
+`trailOffsetDist` is NOT cleared when a group leaves the trail world. A ROAD column
+ordered afterwards writes only `roadOffsetDist`, so every group that had marched in
+a trail keeps its `trailOffsetDist` forever (the RPT of the same session shows road
+groups at 9-78 m and trail leftovers at 158-217 m still holding `off`).
+
+Consequences:
+
+1. Those ghosts were counted as participants, so `_count` was larger than the real
+   column and the pairing `[1&2][3&4]...` shifted by the number of intruders.
+2. With an odd effective count the loop leaves ONE member on an incomplete pair - and
+   because the intruders sort AFTER (or among) the real tail, the member left out is
+   one of the LAST real teams.
+3. Ghosts also kept a `trailShoulderOffset` from a previous compaction, so they were
+   drawn in a lane of a column they did not belong to.
+
+The ROAD compact never showed this because it filters on `roadShoulderOffset != 0`,
+a field that only exists while a road column is being laid.
+
+### The rule
+
+A resolver that consumes the registry must select its population with **exactly the
+same predicate** as the consumer that will act on the result:
+
+```sqf
+platoonId == _pltId
+AND movingMode == "FOLLOWING_TRAIL"
+AND trailOffsetDist > 0          // the test fn_formationsTrailQueueSync uses
+```
+
+Anything wider silently includes groups from another world, another platoon, or a
+finished order.
+
+### Applied
+
+- `_participants` uses the three-clause test above (identical to the queue).
+- Non-participants are DETACHED from the trail chain: residual `trailOffsetDist` and
+  `trailShoulderOffset` are reset to 0, so a ghost can neither take a pair position
+  now nor corrupt a later compaction.
+- Debug counter under `FTCS_Debug_Mode`:
+  `[TRAIL][COMPACT] plt N: X participants -> Y pairs, unpaired=Z, depth=Dm`.
+  If `X` differs from the number of groups the queue chains in that platoon, the
+  filter is wrong again.
+
+### Rules derived
+
+1. A field that identifies MEMBERSHIP in a march world must be cleared when that
+   world ends, or every consumer must re-test membership instead of reading the field
+   alone. Prefer the explicit predicate.
+2. When a "leftover at the end" symptom appears in a pairing/zip operation, count the
+   participants FIRST: an odd or inflated count is the fingerprint of a bad filter,
+   not of a bad pairing loop.
+
+---
+
+## Lesson 30 — The TRIM floor must include the groups that are still WAITING (a seated-only floor starves the tail)
+
+**Date:** 2026-11-16
+**Module:** `Functions/Movement/fn_formationsTrailQueueSync.sqf`, `Functions/Roads/fn_trailTrimToArc.sqf`, `fn_trailColumnSet.sqf`
+**Type:** Lesson
+
+### Symptom (in game + RPT `Arma3_x64_2026-11-16_13-53-51.rpt`)
+
+The LAST teams of the trail column took forever to start and finally never started,
+while the lieutenant walked hundreds of metres away:
+
+```
+13:56:39  'HQ (Guide & Security Element)' off=217 seat=-1  (cap=-1) -> HOLDS
+14:28:36  'HQ (Guide & Security Element)' off=217 seat=86  (cap=-1) -> HOLDS
+```
+
+32 MINUTES holding, and the seat it finally got (`86`) is not its seat at all.
+
+### Verified root cause
+
+`fn_trailTrimToArc` cuts against `trailMinSeatArc`, which Lesson 27 defined as
+`headDist - deepest offset WITH A SEAT`. A group that is still WAITING has no seat -
+and it is precisely that group whose depth the trim is eating:
+
+```
+seated offsets : 1 .. 158      -> floor = headDist - 158
+trimLimit      = floor - 100   -> trims everything before headDist - 258
+```
+
+The trail is left with 83-99 points (~170-200 m, verified in the RPT) while the
+column needs 217 m. When Mortars/Guide finally reach their turn, the point at their
+depth no longer exists: `trailIndexAtArc` saturates at the last surviving index (86)
+and the group holds forever. The trim does not kill them at the moment of trimming;
+it makes their future seat impossible.
+
+This was introduced by Lesson 27's own fix: replacing an over-cutting floor by an
+under-protecting one.
+
+### Correct rule
+
+The floor protects the DEEPEST offset of the column, seated OR waiting:
+
+```sqf
+protected = max(deepestSeatedOff, deepestAnyOff)   // queue, every tick
+trailMinSeatArc = headDist - protected
+```
+
+`deepestAnyOff` is `_frontDist` at the end of the chain walk (updated for every car,
+seated or not - the chain note already required it).
+
+Belt and braces: `fn_trailTrimToArc` ALSO floors the cut with the anchor's
+`trailMaxOffset` (`headDist - trailMaxOffset`), so even a stale or clamped
+`trailMinSeatArc` can never cut ground inside the column's own depth.
+
+### Rules derived
+
+1. A memory bound must protect **every consumer that will need the data**, including
+   the ones that are currently blocked and derive their need from a FUTURE position.
+   "Currently reading" is not the same as "about to read".
+2. When fixing an over-aggressive bound (Lesson 27), state explicitly WHICH offset
+   the new floor protects. A floor that is smaller than the largest doctrinal depth
+   is not a safety margin, it is a bug waiting for a long march.
+3. One symptom (the tail never starts) can have two different causes in sequence:
+   first the release criterion, then the data the criterion needs. Check the data
+   survives before blaming the timing.
+
+---
+
+## Lesson 31 — A stuck-group escape must skip ONE index, never jump to the seat
+
+**Date:** 2026-11-16
+**Module:** `Functions/Formations/fn_formationsGroupFollowTrail.sqf`
+**Type:** Lesson
+
+### Symptom (in game)
+
+When the lieutenant went far ahead, some groups **cut straight across the terrain**
+instead of following the recorded track - "they overtake the whole file".
+
+### Verified root cause
+
+Lesson 25 changed the timeout escape from `target + 1` to the full seat:
+
+```sqf
+private _releaseIdx = (_slotIndex min _maxIdx) max 0;
+_targetIdx = _releaseIdx;          // WRONG
+```
+
+The seat can be 50-150 m ahead. `_group move <that point>` is a PATHFINDING request,
+so Arma picks the shortest route to it and the group never steps on the recorded
+points in between. That breaks the single invariant the trail column exists for:
+every group walks the leader's track, point by point.
+
+The two goals conflict directly:
+
+- skip one index  -> lane invariant preserved, but a truly blocked point retries forever
+- jump to the seat -> recovers instantly, but destroys the lane
+
+### Correct resolution (applied)
+
+```sqf
+private _nextIdx = ((_targetIdx + 1) min _slotIndex) min _maxIdx;
+```
+
+- Steps ONE index per `_stuckTimeout` (20 s): the group still walks every recorded
+  point in order, so the lane is intact.
+- The recovery is real: a blocked point costs 20 s, not eternity, and the next point
+  is usually reachable.
+- Never past the seat: the clamp below (`_slotIndex = _targetIdx`) must not be able
+  to replace the queue's ceiling with a local guess (the single-writer rule).
+
+### Rules derived
+
+1. In an index-based lane, ANY target that is not the next reachable point is a
+   corner-cutting bug by definition - however good the recovery looks.
+2. A recovery must be the SMALLEST step that escapes the failure, not the most
+   convenient one. "Reach the final destination" is a different operation from
+   "recover", and mixing them silently changes the pathing contract.
+3. When two invariants conflict (never stuck vs never cut corners), keep the one the
+   feature exists for and slow the other down.
+
+---
+
+## Lesson 32 — A memory bound may not depend on data published by a thread that runs AFTER it (trim/record equilibrium)
+
+**Date:** 2026-11-16
+**Module:** `Functions/Roads/fn_trailTrimToArc.sqf`, `Functions/Formations/fn_formationsGroupFollowTrail.sqf`
+**Type:** Lesson
+
+### Symptom (RPT `Arma3_x64_2026-11-16_13-53-51.rpt`, 14:36-14:37)
+
+Everything moved much better, but THE LAST GROUPS were left behind again:
+
+```
+off=169 -> seat=6   (max=94)
+off=189 -> seat=94  (cap=6)  -> HOLDS
+off=200 -> seat=94  (cap=-1) -> HOLDS
+off=217 -> seat=94  (cap=-1) -> HOLDS
+```
+
+and the trim log shows why `max` is pinned at 94:
+
+```
+14:36:24  Trim: dropped 10 pts (26.5m) -> 103 pts
+14:36:33  Trim: dropped 10 pts (27.4m) -> 101 pts
+14:36:54  Trim: dropped 10 pts (31.3m) ->  95 pts
+14:37:05  Trim: dropped 10 pts (27.8m) ->  94 pts
+```
+
+### Verified root cause
+
+The trim runs FIRST in the tick; the queue (`fn_formationsTrailQueueSync`) publishes
+`trailMinSeatArc` / `trailMaxOffset` AFTERWARDS. So the trim always worked with the
+PREVIOUS tick's floor - and on the ticks that mattered those fields did not exist
+yet (`getOrDefault` -> 0 -> protection skipped entirely).
+
+With no protection it reached a stable EQUILIBRIUM with the recorder:
+
+```
+recorder: +2 m (one point) per 0.25 s tick
+trim    : -10 points (~25 m) as soon as 10 are eligible (~every 10 s)
+=> path oscillates around 95-103 points and NEVER reaches the 217 m the column needs
+```
+
+A group deeper than the plateau can never obtain a seat: `trailIndexAtArc` saturates
+at the last surviving index, and `seat` is published as that index - so the group
+holds forever, "lost at the back".
+
+### Correct design (applied)
+
+1. **Self-contained guard.** `fn_trailTrimToArc` reads the registry itself and
+   protects the deepest `trailOffsetDist` of its platoon with
+   `movingMode == "FOLLOWING_TRAIL"` (seated OR waiting). Published anchor values are
+   only an ADDITIONAL floor, never the primary one:
+
+   ```sqf
+   _guardArc = headDist - deepestOff          // from the registry, this tick
+   _guardArc = max(_guardArc, headDist - trailMaxOffset)   // published, if any
+   trimLimit = max(tailArc, _guardArc) - cushion
+   ```
+
+2. **Batching raised** to 20 points and cushion to 150 m: fewer renumbers, and the
+   column-depth guard always wins by a wide margin.
+3. **Tail fallback in the follower** (safety net): a group with no seat at all in a
+   `>= 2`-point path walks to index 0 - ground the leader really walked, strictly
+   behind every seat - instead of freezing where it was placed.
+
+### Rules derived
+
+1. A maintenance pass (trim, eviction, compaction) must derive its bound from the
+   SOURCE OF TRUTH it can read itself, in the same tick. Depending on a value another
+   thread publishes later makes the bound one tick stale - and a stale bound that is
+   SMALLER than the need is not a safety margin, it is a slow starvation.
+2. Two loops (add one point / drop many) can form a stable LIMIT CYCLE that looks
+   like normal operation in the log and only shows up as "the tail never arrives".
+   When you see maintenance firing periodically at roughly the rate of production,
+   suspect equilibrium before suspecting the consumer.
+3. Every consumer that can be starved needs an explicit, logged fallback
+   (`***` prefixed) so the failure is visible instead of silent.
+
+---
+
+## Lesson 33 — When the file is compressed against the trail tip, SPACING must yield to ORDER
+
+**Date:** 2026-11-16
+**Module:** `Functions/Movement/fn_formationsTrailQueueSync.sqf`
+**Type:** Lesson
+
+### Symptom (RPT `Arma3_x64_2026-11-16_13-53-51.rpt`)
+
+Everything worked, but the LAST group of the column was left out:
+
+```
+'1st Platoon - Mortar Section'          off=200  seat=2   (max=106) -> SEAT
+'HQ (Guide & Security Element)'         off=217  seat=106 (cap=2)   -> HOLDS
+```
+
+### Verified root cause
+
+Pure arithmetic impossibility, no timing involved. For the last car:
+
+```
+_gapIdx  = ceil((217 - 200) / 2) = 9      // its own doctrinal separation
+_frontSeat = 2                            // the car in front only has 2 indexes left
+_maxSeat = 2 - 9 = -7  ->  seat = -1  ->  HOLDS
+```
+
+The two rules imposed on the car contradict each other while the column is bunched
+against the tip of the trail:
+
+- ORDER  : `seat <= frontSeat`            (never overtake)
+- SPACING: `seat <= frontSeat - gapIdx`   (keep the doctrinal separation)
+
+`frontSeat - gapIdx < 0` means the SPACING rule cannot be satisfied by ANY valid
+index, so the resolution `-1` (hold) fired even though both cars are legitimately
+members of the column. The group then waited for the leader to walk far enough for
+the file to expand - and if he stopped there, it waited forever.
+
+### Correct rule (applied)
+
+SPACING is a DESIRE; ORDER is a REQUIREMENT. When they cannot both hold, keep the
+minimum order - **one index behind the car in front** - and let the group in:
+
+```sqf
+if (_seat < 0 && { _frontSeat >= 1 }) then {
+    _seat = _frontSeat - 1;      // minimum order, logged under FTCS_Debug_Mode
+};
+```
+
+Consequences:
+
+- The group enters the column in the SAME tick its predecessor has a seat; it never
+  waits for ground that does not exist.
+- It recovers its doctrinal gap automatically as the trail grows (the natural seat
+  moves back up), so no permanent spacing is lost - only a temporary compression.
+- A car whose predecessor genuinely has NO seat (`_frontSeat < 0`) still holds: there
+  is nothing to chain behind, and that is correct.
+
+### Rules derived
+
+1. When two constraints can be jointly unsatisfiable, declare which one is a HARD
+   requirement and which is a preference, and encode the fallback explicitly. A
+   `-1` that means "no solution" becomes a permanent stall if the input never changes.
+2. A group outside the column is a WORSE failure than a group temporarily too close:
+   the first one is unrecoverable without new orders, the second one heals itself.
+3. Prefer closing against a measured quantity (indexes left in the trail) than
+   against a doctrinal one (metres of separation). The measured one is what exists.

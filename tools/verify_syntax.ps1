@@ -44,6 +44,8 @@ $files = @(
     "Functions\Formations\fn_formationsGroupFollowTrail.sqf",
     "Functions\Roads\fn_trailAdvanceAnchor.sqf",
     "Functions\Roads\fn_trailIndexAtArc.sqf",
+    "Functions\Roads\fn_trailTrimToArc.sqf",
+    "Functions\UI\fn_commandMenusRefresh.sqf",
     "Functions\Roads\fn_roadFindSegment.sqf",
     "Functions\Roads\fn_roadBuildPath.sqf",
     "Functions\Roads\fn_roadGetPointsBehind.sqf",
