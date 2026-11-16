@@ -61,6 +61,7 @@ if (_origin isEqualType objNull) then {
 private _nearRoads = _searchPos nearRoads _searchRadius;
 
 if (count _nearRoads == 0) exitWith {
+    diag_log format ["[FTCS][ROAD][FIND] *** no road within %1m of %2", _searchRadius, _searchPos];
     [objNull, 0, 0, "NONE"]
 };
 
@@ -83,6 +84,17 @@ if (_rawWidth isEqualType 0 && {_rawWidth > 0}) then {
     private _dy = abs (((_bb select 1) select 1) - ((_bb select 0) select 1));
     private _smallerDim = _dx min _dy;
     _width = if (_smallerDim > 0.5) then { _smallerDim } else { 4.5 };
+};
+
+// ROAD-DIAG: bridge detection is reported but NOT used for routing decisions.
+// A bridge segment is a normal road piece for this function, yet the ENGINE
+// pathfinder may refuse to path across it (navmesh gap, height step, width).
+// Logging isBridge here is what distinguishes "the road exists" from
+// "the units can physically cross it".
+private _isBridge = if (count _roadInfo > 7) then { _roadInfo select 7 } else { false };
+if (missionNamespace getVariable ["FTCS_Debug_Mode", false]) then {
+    diag_log format ["[FTCS][ROAD][FIND] pos=%1 radius=%2 roadsFound=%3 closest='%4' width=%5 isBridge=%6",
+        _searchPos, _searchRadius, count _nearRoads, getText (configFile >> "CfgVehicles" >> (typeOf _closestRoad) >> "displayName"), _width, _isBridge];
 };
 
 // Calculate road segment tangent direction from end1 to end2

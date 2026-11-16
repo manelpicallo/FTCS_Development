@@ -444,20 +444,48 @@ switch (_commandCode) do {
         systemChat "[MARCH CONTROL] Platoon pace set to FAST (Rush / Quick Bound).";
     };
     case "PLT_ROAD_COLUMN": {
+        // ROAD-DIAG: entry trace. Without these lines a failed road order is
+        // invisible in the RPT (the block used to log nothing at all).
+        private _dbgRoad = missionNamespace getVariable ["FTCS_Debug_Mode", false];
+        if (_dbgRoad) then { diag_log "[FTCS][ROAD] ===== ROAD COLUMN ORDER RECEIVED ====="; };
         private _ldr = call _fnc_getPlatoonLeaderUnit;
+        if (isNull _ldr) exitWith {
+            diag_log "[FTCS][ROAD] *** ABORT: platoon leader is objNull.";
+            systemChat "[ROAD MARCH] Error: platoon leader not found.";
+        };
+        if (_dbgRoad) then {
+            diag_log format ["[FTCS][ROAD] leader='%1' pos=%2 dir=%3", name _ldr, getPosATL _ldr, round getDir _ldr];
+        };
+
         private _roadScan = [_ldr, 30] call FTCS_fnc_roadFindSegment;
         _roadScan params ["_roadSeg", "_roadWidth", "_roadDir", "_roadCategory"];
+        if (_dbgRoad) then {
+            diag_log format ["[FTCS][ROAD] roadFindSegment -> segNull=%1 width=%2 dir=%3 category='%4'",
+                isNull _roadSeg, _roadWidth, (if (isNil "_roadDir") then { "<nil>" } else { round _roadDir }), _roadCategory];
+        };
 
         if (isNull _roadSeg || _roadCategory == "NONE") exitWith {
+            diag_log "[FTCS][ROAD] *** ABORT: no road segment / category NONE.";
             hint parseText "<t color='#FF5555'>[ROAD MARCH FAILED]</t><br/>No road or trail detected under crosshair or within 30m of Platoon Leader.<br/><t color='#AAAAAA'>Position leader on or look at a road segment.</t>";
             systemChat "[ROAD MARCH] Error: No road segment detected in proximity.";
         };
 
         // Build continuous rearward road path (200m depth for platoon)
         private _roadPath = [_roadSeg, 200, getDir _ldr, _roadWidth] call FTCS_fnc_roadBuildPath;
+        if (_dbgRoad) then {
+            diag_log format ["[FTCS][ROAD] roadBuildPath -> %1 waypoints", count _roadPath];
+        };
         if (count _roadPath == 0) exitWith {
+            diag_log "[FTCS][ROAD] *** ABORT: roadBuildPath returned 0 waypoints.";
             hint parseText "<t color='#FF5555'>[ROAD MARCH FAILED]</t><br/>Could not map connected road segments.";
             systemChat "[ROAD MARCH] Error: Could not construct road path.";
+        };
+        // Dump the first / middle / last point so a broken polyline (e.g. one that
+        // stops at a bridge or jumps across water) is visible at a glance.
+        if (_dbgRoad) then {
+            private _midIdx = round ((count _roadPath - 1) / 2);
+            diag_log format ["[FTCS][ROAD] path[0]=%1 path[%2]=%3 path[last]=%4",
+                (_roadPath select 0), _midIdx, (_roadPath select _midIdx), (_roadPath select ((count _roadPath) - 1))];
         };
 
         // Set platoon advance direction from road segment orientation to guarantee stable road tracking
@@ -559,7 +587,17 @@ switch (_commandCode) do {
         // value (-1/+1) makes roadColumnSet deploy single-shoulder; 0 = staggered
         private _forcedSideRC = missionNamespace getVariable ["FTCS_Road_Column_ForcedSide", 0];
         missionNamespace setVariable ["FTCS_Road_Column_ForcedSide", 0]; // consume once
+        if (_dbgRoad) then {
+            diag_log format ["[FTCS][ROAD] formation elements: %1 groups collected (leaderGroup='%2')",
+                count (_formationElements select 1), groupId _leaderGroup];
+        };
         private _followerGroups = [_formationElements, _roadPath, 8, _forcedSideRC] call FTCS_fnc_formationsRoadColumnSet;
+        if (_dbgRoad) then {
+            diag_log format ["[FTCS][ROAD] formationsRoadColumnSet -> %1 follower groups slotted", count _followerGroups];
+        };
+        if (count _followerGroups == 0) then {
+            diag_log "[FTCS][ROAD] *** WARNING: no follower groups - every squad stays static (no road follow thread).";
+        };
 
         // Extend mapped path rearward if total column depth exceeds the initially mapped road distance
         private _maxAssignedDist = 0;
@@ -651,21 +689,10 @@ switch (_commandCode) do {
 
         {
             if (!isNull _x) then {
-                (leader _x) enableAI "PATH";
-                (leader _x) enableAI "MOVE";
-                (leader _x) disableAI "TARGET";
-                (leader _x) disableAI "AUTOCOMBAT";
-                (leader _x) disableAI "COVER";
-                (leader _x) disableAI "RADIOPROTOCOL";
-
-                {
-                    _x enableAI "PATH";
-                    _x enableAI "MOVE";
-                    _x disableAI "TARGET";
-                    _x disableAI "AUTOCOMBAT";
-                    _x disableAI "COVER";
-                    _x disableAI "RADIOPROTOCOL";
-                } forEach (units _x);
+                // Rule 15: waking the squad is one standardised call. Road march adds
+                // the march profile below through the group setters.
+                [_x, (leader _x), false] call FTCS_fnc_groupAwakenForMarch;
+                { _x disableAI "TARGET"; _x disableAI "RADIOPROTOCOL"; } forEach (units _x);
 
                 [_x, "ROAD_MARCH"] call FTCS_fnc_groupSetAwareMode; // disciplined march profile (no COVER/AUTOTARGET)
                 [_x, "NORMAL"] call FTCS_fnc_groupSetSpeed;
@@ -741,22 +768,18 @@ switch (_commandCode) do {
         [_pltIdT, "trailAnchor", _anchorT] call FTCS_fnc_registrySetPlatoon;
         _platoonsMap set [_pltKey, _pltData];
 
-        // Awaken AI and configure the SAME doctrinal march profile as road march
+        // Awaken AI and configure the SAME doctrinal march profile as road march.
+        // Rule 15: waking is one standardised call; the formation is set by the
+        // awakener as well (column, the single-file trail formation).
         {
             if (!isNull _x) then {
-                (leader _x) enableAI "PATH";
-                (leader _x) enableAI "MOVE";
-                (leader _x) disableAI "TARGET";
-                (leader _x) disableAI "AUTOCOMBAT";
-                (leader _x) disableAI "COVER";
-                (leader _x) disableAI "RADIOPROTOCOL";
-                { _x enableAI "PATH"; _x enableAI "MOVE"; _x disableAI "TARGET"; _x disableAI "AUTOCOMBAT"; _x disableAI "COVER"; _x disableAI "RADIOPROTOCOL"; } forEach (units _x);
+                [_x, (leader _x), true] call FTCS_fnc_groupAwakenForMarch;
+                { _x disableAI "TARGET"; _x disableAI "RADIOPROTOCOL"; } forEach (units _x);
 
                 [_x, "ROAD_MARCH"] call FTCS_fnc_groupSetAwareMode;
                 [_x, "NORMAL"] call FTCS_fnc_groupSetSpeed;
                 [_x, "FIRE_IF_FIRED_UPON"] call FTCS_fnc_groupSetROE;
                 [_x, "FOLLOW_COMMANDER_STANCE"] call FTCS_fnc_groupSetStance;
-                _x setFormation "COLUMN"; // same native formation as road march (single file)
             };
         } forEach _trailGroups;
 
@@ -767,7 +790,16 @@ switch (_commandCode) do {
             while { !isNull _ldr &&
                     { (missionNamespace getVariable [format ["FTCS_Trail_Gen_PLT_%1", _pltId], 0]) == _gen } } do {
                 [_ldr, _anchor, 2.0, 60] call FTCS_fnc_trailAdvanceAnchor;
-                sleep 0.5;
+                // Refresh the queue chain BEFORE the per-group loops tick, so each
+                // loop finds a fresh "trailQueueInheritPos" when its natural slot is
+                // invalid (bridge / gap / clearance). One pass for the whole column.
+                [_pltId] call FTCS_fnc_formationsTrailQueueSync;
+                // 0.25 s instead of 0.5 s: the recorder appends at most ONE point per
+                // tick, so this interval is the real granularity of the whole column.
+                // At 0.5 s a 1.4 m/s walk accumulated up to 0.7 m extra before a
+                // point could be written, and the followers visibly lagged the
+                // leader by that much on top of their own offset.
+                sleep 0.25;
             };
         };
 

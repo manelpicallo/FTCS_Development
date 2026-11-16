@@ -97,10 +97,10 @@ switch (_targetPhase) do {
     case 1: { // PHASE 1: APPROACH (Traveling & Security / Unalerted non-combat)
         {
             private _grp = _x;
-            // Awaken movement if frozen in assembly area
-            (leader _grp) enableAI "PATH";
-            (leader _grp) enableAI "MOVE";
-            { _x enableAI "PATH"; _x enableAI "MOVE"; } forEach (units _grp);
+            // Awaken movement if frozen in the assembly area (Rule 15: one
+            // standardised call). Phase state does not own a formation, so the
+            // native formation already applied is preserved.
+            [_grp, (leader _grp), false] call FTCS_fnc_groupAwakenForMarch;
 
             // Behavior CARELESS: weapons lowered/at rest, unalerted non-combat posture
             [_grp, "CARELESS"] call FTCS_fnc_groupSetAwareMode;
@@ -116,9 +116,7 @@ switch (_targetPhase) do {
     case 2: { // PHASE 2: CONTACT LIKELY / OVERWATCH (Cautious / Linear Danger Area)
         {
             private _grp = _x;
-            (leader _grp) enableAI "PATH";
-            (leader _grp) enableAI "MOVE";
-            { _x enableAI "PATH"; _x enableAI "MOVE"; } forEach (units _grp);
+            [_grp, (leader _grp), false] call FTCS_fnc_groupAwakenForMarch;
 
             // Behavior AWARE: scanning sectors, cautious traveling overwatch pace
             [_grp, "AWARE"] call FTCS_fnc_groupSetAwareMode;
@@ -134,9 +132,7 @@ switch (_targetPhase) do {
     case 3: { // PHASE 3: COMBAT, ASSAULT & CONSOLIDATION (Full combat readiness)
         {
             private _grp = _x;
-            (leader _grp) enableAI "PATH";
-            (leader _grp) enableAI "MOVE";
-            { _x enableAI "PATH"; _x enableAI "MOVE"; } forEach (units _grp);
+            [_grp, (leader _grp), false] call FTCS_fnc_groupAwakenForMarch;
 
             // Behavior COMBAT: tactical bounding, dynamic cover, weapons free
             [_grp, "COMBAT"] call FTCS_fnc_groupSetAwareMode;

@@ -359,15 +359,10 @@ if (!isNull _leaderGroup) then {
     };
 
     if (_platoonPhase < 3) then {
-        {
-            if (_x != _platoonLeaderUnit) then {
-                _x disableAI "AUTOCOMBAT";
-                _x disableAI "COVER";
-                _x enableAI "PATH";
-                _x enableAI "MOVE";
-                _x doFollow _platoonLeaderUnit;
-            };
-        } forEach (units _leaderGroup);
+        // Rule 15: the AI commands live in ONE standardised function. This is the
+        // wake-up every formation order relies on - a marcher arriving from the
+        // assembly area still has its movement AI frozen.
+        [_leaderGroup, _platoonLeaderUnit, false] call FTCS_fnc_groupAwakenForMarch;
     };
 };
 

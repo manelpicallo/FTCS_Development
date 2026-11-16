@@ -78,6 +78,29 @@
     - Invariante jerárquica obligatoria para TODA función de movimiento/órdenes (pelotón, squad, HALT, REJOIN, marchas, formaciones): (1) el teniente es el ancla del pelotón; los grupos LÍDER de cada squad ocupan los slots 0–12 asignados por el teniente y le siguen (REL/ABS); (2) TODOS los demás grupos internos de un squad siguen SIEMPRE a su PROPIO LÍDER DE SQUAD, nunca al teniente, preservando la geometría de formación; (3) única excepción: grupos re-asignados explícitamente a un slot dirigido por el teniente (ej. scouts a slots 5/6/7/8/11/12) quedan temporalmente anclados a él hasta re-anclarse a su líder de squad. Toda función nueva debe verificarse contra este invariante antes de integrarse; violarlo ES un bug por definición.
     - Cumplimiento: antes de entregar cualquier cambio, buscar en él coincidencias de cadenas contra nombres doctrinales; si existen, rediseñar usando referencias de objeto del registro. Sin excepciones.
 
+19. **TRAZAS DE DEPURACIÓN OBLIGATORIAMENTE BAJO CENTINELA (Debug Sentinel Policy):**
+    - Toda traza (`diag_log`, `systemChat`, marcadores de debug) que se añada con fines de **diagnóstico, telemetría o instrumentación** debe emitirse **bajo un centinela**. Nunca incondicional.
+    - **Centinelas disponibles (en `fn_registryInit`, sección 1):**
+      - `FTCS_Debug_Mode` (BOOLEAN, default `true`): telemetría de estado — qué decide el sistema, qué valores lee, qué grupos participan.
+      - `FTCS_Debug_Trace` (BOOLEAN, default `false`, subordinado al anterior): verbosidad extrema — por paso de bucle, por tick, por grupo, por frame. Solo cuando se investiga un problema concreto.
+    - **EXCEPCIÓN OBLIGATORIA — fallos reales:** abortos, validaciones fallidas, estados imposibles, referencias nulas y errores recuperados se registran **siempre**, sin centinela, con el prefijo `***` en el mensaje para que sean localizables de un vistazo. Un log saturado esconde el error verdadero; un log vacío esconde el fallo silencioso.
+    - **Patrón de referencia:**
+      ```sqf
+      // Telemetría -> centinela principal
+      if (missionNamespace getVariable ["FTCS_Debug_Mode", false]) then {
+          diag_log format ["[FTCS][MODULE] estado=%1", _estado];
+      };
+      // Verbosidad por paso -> centinela de traza
+      if (missionNamespace getVariable ["FTCS_Debug_Mode", false]
+          && { missionNamespace getVariable ["FTCS_Debug_Trace", false] }) then {
+          diag_log format ["[FTCS][MODULE] step %1", _i];
+      };
+      // Fallo real -> SIEMPRE
+      diag_log format ["[FTCS][MODULE] *** ABORT: %1", _motivo];
+      ```
+    - **Excepción de arranque:** las trazas de inicialización (`init.sqf`, `fn_executeDeployment`, `fn_loadDoctrineData`, `fn_spawnDoctrine`, `fn_parseEditorGroups`, `fn_applyDoctrine`, `fn_initCompanyCommand`) pueden ser incondicionales: son pocas, únicas por partida y confirman que el sistema arrancó.
+    - **Motivo:** el coste de un `if` es despreciable frente al `diag_log` que protege; y borrar el diagnóstico para «limpiar la versión final» obliga a rehacerlo la próxima vez. El código de diagnóstico se conserva y se apaga con el flag.
+
 **Validación contra este documento:**
 
 - Antes de proponer o modificar código, comprueba que el cambio cumple las especificaciones de este documento.
@@ -86,6 +109,7 @@
 - Si un cambio exige actualizar este documento, indícamelo explícitamente.
 - **Sincronización Obligatoria de la Estructura de Datos:** La especificación y el árbol formal de todas las tablas de hash y modelos de datos del proyecto (`FTCS_Company_Data`, `FTCS_Groups_Registry_Table`, plantillas doctrinales, tuplas y estados) residen en el fichero `FTCS_Data_Structure_Reference.md`. Si cualquier tarea modifica, amplía o altera campos, estructuras o enumeraciones en el código backend, **la IA debe actualizar obligatoriamente dicho fichero `FTCS_Data_Structure_Reference.md`** para mantenerlo siempre como referencia técnica viva y exacta.
 - **Sincronización Obligatoria de la Estructura de Menús:** La arquitectura, jerarquía y definición de los menús e interfaces de comando del proyecto residen en el documento `FTCS_Menu_Structure_Reference`. La IA debe mirarse siempre el documento `FTCS_Menu_Structure_Reference` para que lo actualice obligatoriamente siempre que toque o modifique cualquier aspecto referente al tema de ese fichero (menús e interfaces de comando), manteniendo rigurosamente el formato original del fichero con las modificaciones oportunas.
+- **Diario de Sesión Obligatorio (`FTCS_Session_Log.md`):** El fichero `FTCS_Session_Log.md` (raíz del proyecto) es el **diario de trabajo entre sesiones**: la entrada más reciente va arriba y resume qué se tocó en la última sesión, qué está verificado, qué NO, cómo probarlo y qué pendientes quedaron abiertos. La IA debe leerlo **al retomar el proyecto, después de este documento y de `FTCS_Data_Structure_Reference.md`**, y **añadir una entrada nueva al cerrar cada sesión** de trabajo (no se reescriben las antiguas). No duplica lecciones: los hallazgos técnicos van a `FTCS_Programming_Lessons.md` y aquí sólo se referencian por número.
 - **Base de Conocimiento Técnica Obligatoria (`FTCS_Programming_Lessons.md`):** El fichero `FTCS_Programming_Lessons.md` (raíz del proyecto) es la base de conocimiento viva del proyecto: registra cada hallazgo técnico verificado de programación (quirks del motor de Arma, errores de parseo SQF, causas raíz de bugs resueltos, patrones de depuración), numerado y fechado. La IA debe **leerlo COMPLETO antes de programar o depurar cualquier código del proyecto**, **aplicar sus lecciones** (son hallazgos ya probados en el motor, no hipótesis) y **añadir una nueva entrada numerada** cada vez que se descubra y verifique un nuevo hallazgo técnico, para que cualquier IA (o programador) que arranque desde cero disponga inmediatamente de todo el conocimiento acumulado.
 - **Registro de Cambios Estructurales y de Diseño para IA (`FTCS_Programming_Lessons.md`, sección de arquitectura):** Además de los hallazgos de programación, cuando una tarea implique un **cambio estructural importante del software** (nueva capa o sistema, cambio en el flujo de órdenes o en el ciclo de vida de datos, reorganización de módulos) o la **incorporación de un mecanismo crucial para entender el funcionamiento del proyecto** (por ejemplo: la estructura de datos y su ciclo de vida, el modelo de registro/hash central, la propagación de órdenes entre niveles), la IA debe añadir en ese mismo fichero una **entrada de tipo "Architecture / Design Note"** redactada como **guía directa para una IA** (orientada a consumo automático: invariantes que no se pueden romper, contratos entre módulos, qué leer y en qué orden para entender el sistema). Este registro es **distinto y complementario** a la documentación de diseño existente orientada a intervención humana: aquella explica el *qué* y el *por qué* para el programador; esta nota explica el *cómo funciona y cómo no romperlo* para la IA que programa sobre ello. Ambos tipos de entrada conviven numerados y fechados en el mismo fichero.
 

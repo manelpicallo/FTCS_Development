@@ -63,26 +63,19 @@ private _fnc_samplePathAtDistance = {
     _foundPt
 };
 
-// Explicitly un-freeze and awaken AI units from assembly area doStop
+// Explicitly un-freeze and awaken AI units from the assembly area freeze.
+// Rule 15: the native AI commands live in ONE standardised function.
 
+[_group, (leader _group), true] call FTCS_fnc_groupAwakenForMarch;
+
+// Road march additionally silences TARGET and the radio protocol, and restores the
+// engine's own speed cap: those are march-profile concerns the shared awakener does
+// not own. They stay here, next to the road-march tick that depends on them.
 {
-    _x enableAI "PATH";
-    _x enableAI "MOVE";
     _x disableAI "TARGET";
-    _x disableAI "AUTOCOMBAT";
-    _x disableAI "COVER";
     _x disableAI "RADIOPROTOCOL";
     _x forceSpeed -1;
-    _x doFollow (leader _group);
 } forEach (units _group);
-
-(leader _group) enableAI "PATH";
-(leader _group) enableAI "MOVE";
-(leader _group) disableAI "TARGET";
-(leader _group) disableAI "AUTOCOMBAT";
-(leader _group) disableAI "COVER";
-
-_group setFormation "COLUMN";
 
 // Initial deployment positioning
 private _initRoadPos = [ _groupID, "roadTargetPos" ] call FTCS_fnc_registryGet;
@@ -153,12 +146,72 @@ while {((_group getVariable ["FTCS_FollowThread_ID", -1]) == _threadID) &&
             _dynTargetPos = _curLeaderPos getPos [_offsetDist, (_curLeaderDir + 180) % 360];
         };
 
+        // ---------------------------------------------------------------------
+        // TRANSITABILITY SNAP (Lesson 13 / PENDING-4, phase C)
+        //
+        // Two distinct cases leave a road slot without ground support:
+        //   a) the shoulder offset pushes it off a narrow bridge deck, or
+        //   b) the map's bridge roadway is offset/narrower than the visual deck
+        //      (Prokhorovka 1943 crosses on the LEFT edge only), so the geometric
+        //      centre of the bridge is WATER for the engine.
+        // In both cases the AI would SWIM to the slot and settle under the bridge.
+        //
+        // fn_findTransitableNear probes the slot (ray DOWN first: an object hit -
+        // bridge deck, pier, ramp - means SUPPORTED even when surfaceIsWater says
+        // "water"; terrain water test only when nothing solid is hit) and snaps it
+        // to the nearest supported point within 12 m.
+        // PRIORITY AT A CROSSING: crossing beats geometry - a few metres of lateral
+        // drift to reach real traversable ground is always the right trade.
+        // ---------------------------------------------------------------------
+        private _snapRC = [_dynTargetPos, 12, 1] call FTCS_fnc_findTransitableNear;
+        private _snapRCPos = _snapRC select 0;
+        private _snapRCOriginal = _snapRC select 1;
+        private _snapRCOffset = _snapRC select 2;
+        if (_snapRCOffset >= 0) then {
+            if (!_snapRCOriginal) then {
+                diag_log format ["[FTCS][ROAD][SNAP] *** '%1' slot unsupported (shoulder %2) -> snapped %3 m to %4",
+                    _groupID, _shoulderOffset, (round (_snapRCOffset * 10) / 10), _snapRCPos];
+            };
+            _dynTargetPos = _snapRCPos;
+        } else {
+            _dynTargetPos = getPosATL (leader _group);
+            diag_log format ["[FTCS][ROAD][SNAP] *** '%1' NO traversable ground within 12 m -> HOLDING at %2",
+                _groupID, _dynTargetPos];
+        };
+
         // Update registry with current dynamic road target
         [ _groupID, "roadTargetPos", _dynTargetPos ] call FTCS_fnc_registrySet;
         [ _groupID, "roadTangentDir", _dynTangentDir ] call FTCS_fnc_registrySet;
 
         // Match group pace strictly to leader speed (no adaptive slot-chasing acceleration)
         { _x limitSpeed _spd; } forEach (units _group);
+
+        // ROAD-DIAG (throttled): reports the slot target and whether it is over
+        // water. A slot point that lands on water is NOT crossable by Arma's AI,
+        // which is the classic "units refuse to step on the bridge" symptom: the
+        // slot sampled from the road path drifted laterally off the deck.
+        private _dbgKey = format ["FTCS_RoadDbg_%1", _groupID];
+        private _now = time;
+        // HEIGHT-AWARE water test (Lesson 13 Part B): surfaceIsWater is true on a
+        // BRIDGE DECK because it samples the terrain cell below, so a road crossing
+        // a bridge must NOT be reported as "on water". Only a slot AT water level
+        // (< 1.2 m above terrain) is genuinely uncrossable.
+        private _tgtTerrainZ = getTerrainHeightASL [(_dynTargetPos select 0), (_dynTargetPos select 1)];
+        private _tgtWater = (surfaceIsWater _dynTargetPos) && { ((_dynTargetPos select 2) - _tgtTerrainZ) < 1.2 };
+        // Always report an uncrossable slot (it is a real failure, not telemetry)
+        if (_tgtWater) then {
+            diag_log format ["[FTCS][ROAD][FOLLOW] *** '%1' slot target is AT WATER LEVEL - AI will refuse to path there.", _groupID];
+        };
+        // Verbose per-group telemetry only under FTCS_Debug_Mode
+        if (missionNamespace getVariable ["FTCS_Debug_Mode", false] && { _now > (_group getVariable [_dbgKey, 0]) }) then {
+            _group setVariable [_dbgKey, _now + 5];
+            private _ldrPos = getPosATL (leader _group);
+            private _ldrTerrainZ = getTerrainHeightASL [(_ldrPos select 0), (_ldrPos select 1)];
+            private _ldrWater = (surfaceIsWater _ldrPos) && { ((_ldrPos select 2) - _ldrTerrainZ) < 1.2 };
+            diag_log format ["[FTCS][ROAD][FOLLOW] '%1' spd=%2 tgt=%3 tgtWater=%4 ldrWater=%5 offDist=%6 shoulder=%7 distToTgt=%8",
+                _groupID, (round (_spd * 10) / 10), _dynTargetPos, _tgtWater, _ldrWater,
+                _offsetDist, _shoulderOffset, round ((leader _group) distance2D _dynTargetPos)];
+        };
 
         // Command group movement towards current road position
         _group move _dynTargetPos;

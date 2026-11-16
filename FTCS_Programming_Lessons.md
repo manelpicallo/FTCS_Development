@@ -49,7 +49,21 @@
 | 12 | 2026-11-14 | Lesson | `parsedSquads` is built AFTER `fn_applyDoctrine`: fields stamped on the doctrine template never reach the runtime teams. Project roles as an INDEX array (`doctrineTeamRoles`) and resolve by `TEAM_<N>` ordinal | `fn_applyDoctrine.sqf`, `fn_parseEditorGroups.sqf`, `fn_registryInit.sqf` |
 | **PENDING-1** | 2026-11-14 | **OPEN Arch/Design** | **Company scale: each AI platoon needs its own follow loop + formation management. Registry data exists, no consumer uses it per platoon yet. Decide BEFORE new features** | every movement/formation function |
 | **PENDING-2** | 2026-11-14 | **CLOSED Verification** | Long-cycle scout verification (3 deploys, REJOIN after recall, road/trail with scouts, mixed squads) - **verified in game**. Kept as regression baseline | `fn_applyCommandToTarget.sqf`, `fn_platoonHaltRejoin.sqf` |
+| 13 | 2026-11-14 | Lesson + Arch/Design | Debug sentinel policy (Rule 19) + `surfaceIsWater` is TRUE on a bridge deck (height-aware test required) | project-wide, `fn_trailAdvanceAnchor.sqf` |
+| 14 | 2026-11-14 | Lesson | `nil` inside an array COLLAPSES it (`[a,b,nil]` -> `[a,b]`); `nil` in `registrySet` DELETES the key and leaves a stale read. Use `[]` as the explicit sentinel | `fn_formationsTrailQueueSync.sqf`, `fn_formationsGroupFollowTrail.sqf` |
 | **SESSION** | 2026-11-14 | **CLOSED Session log** | HALT/REJOIN fix + full RULE 16 migration (phases 1-9). Read this first when resuming | whole project |
+| **PENDING-3** | 2026-11-14 | **OPEN** | Sentinel audit: ~38 diagnostic traces in 12 files still log unconditionally; add `FTCS_Debug_Trace` gating where verbose | see Rule 19 |
+| **PENDING-4** | 2026-11-14 | **CLOSED** | Bridge crossing: `surfaceIsWater` is true on a bridge deck. Applied height-aware test (Z - terrainZ < 1.2 m) in trail record, trail follow and road follow | `fn_trailAdvanceAnchor.sqf`, `fn_formationsGroupFollowTrail.sqf`, `fn_formationsGroupFollowRoad.sqf` |
+| 15 | 2026-11-15 | Arch/Design | Trail column crossing a cut (bridge / gap / clearance): the RECORD freeze IS the barrier. Queue = first car whose natural index exceeds `maxIdx`; everyone behind is re-chained by DOCTRINAL gap, not by copying the car ahead | `Functions/Movement/fn_formationsTrailQueueSync.sqf`, `fn_trailAdvanceAnchor.sqf` |
+| 16 | 2026-11-15 | Lesson | `private _x = <nil>` does NOT create the variable, so `isEqualType` cannot guard a `nil`-returning getter (`FTCS_fnc_registryGet`). Materialise with `isNil` first | `Functions/Formations/fn_formationsGroupFollowTrail.sqf`, `fn_registryInit.sqf` |
+| 17 | 2026-11-15 | Lesson | `allocationSlot` ascending is NOT the march order: road and trail columns must walk the SAME explicit list `[9,0,4,1,2,3,10,5]` (RTO first, scouts excluded) | `Functions/Formations/fn_trailColumnSet.sqf`, `fn_formationsRoadColumnSet.sqf` |
+| **PENDING-5** | 2026-11-15 | **OPEN Refactor** | `_slotOrder = [9,0,4,1,2,3,10,5]` is DUPLICATED in road and trail column functions. Extract to a shared `FTCS_fnc_columnSlotOrder` so the two cannot diverge. Do it when the road column is next touched | `fn_formationsRoadColumnSet.sqf`, `fn_trailColumnSet.sqf` |
+| 18 | 2026-11-15 | Lesson | A trail seat must be measured FROM THE FRONT: `maxIdx - round(offset/step)`, the index form of the road rule `headDist - offsetDist`. Measuring from index 0 mirrored the whole column | `Functions/Movement/fn_formationsTrailQueueSync.sqf`, `fn_formationsGroupFollowTrail.sqf` |
+| 19 | 2026-11-15 | Lesson + Arch/Design | Waking a group for a march is ONE function (`FTCS_fnc_groupAwakenForMarch`), not an inline `enableAI` block in 5 places (Rule 15). Missing in the trail loop = stragglers left at the start point | `Functions/Formations/fn_groupAwakenForMarch.sqf` (new) + 6 call sites |
+| 20 | 2026-11-15 | Lesson | `trailPath` indexes are NOT a uniform 2 m grid: a bridge crossing records ONE point spanning ~100 m. Resolve the seat BY ARC (`fn_trailIndexAtArc`), never by `offset / recordStep` | `Functions/Roads/fn_trailIndexAtArc.sqf` (new), `fn_formationsTrailQueueSync.sqf`, `fn_formationsGroupFollowTrail.sqf` |
+| 21 | 2026-11-15 | Lesson | A queue enforces ORDER, never SPACING: forcing `frontIdx - 1` collapsed the column to consecutive points. Round arc->index to the NEAREST point, keep the arc-derived seat, use `-1` only as a collision guard | `fn_trailIndexAtArc.sqf`, `fn_formationsTrailQueueSync.sqf` |
+| 22 | 2026-11-15 | Arch/Design | A trail column walks the trail POINT BY POINT: `trailCursorIdx` advances +1 on arrival, the seat is a CEILING not a destination. Fixes corner-cutting and makes the bridge crossing a consequence, not a special case | `fn_formationsGroupFollowTrail.sqf`, `fn_trailColumnSet.sqf` |
+| 23 | 2026-11-15 | Lesson | A 1-index lane stutters (target = `cursor+1` + 1 s tick makes the AI brake every 2 m) and a doctrinal seat does not stop overtaking. Fix: cursor = POSITION (while loop over reached points), LOOK-AHEAD target, 0.35 s tick, catch-up scan, and `seat(k) = min(seat(k-1), doctrinal(k))` | `fn_formationsGroupFollowTrail.sqf`, `fn_formationsTrailQueueSync.sqf` |
 
 ---
 
@@ -767,3 +781,832 @@ the platoon id as a parameter whenever available.
 Dynamic cover (Fn 1), heavy-weapons/SBF (Fn 2), auto-ammunition (Fn 3),
 tactical messengers (Fn 4), tactical map/OPORD, map position degradation,
 company mode.
+
+---
+
+## Lesson 13 — Diagnostics go behind a sentinel; only real failures log always. Plus: `surfaceIsWater` is TRUE on a bridge deck
+
+**Date:** 2026-11-14
+**Module:** project-wide (Rule 19 of the design notes), `fn_trailAdvanceAnchor.sqf`, `fn_formationsGroupFollowTrail.sqf`
+**Type:** Lesson + Architecture note
+
+### Part A — Debug Sentinel Policy (now Rule 19 in the design notes)
+
+**Problem.** During the bridge investigation the RPT was flooded with per-frame and per-tick traces (`[TGT-MARKER] Drawing marker ...`, `[ROAD][FOLLOW] ...` every 5 s per group). The single line that mattered was buried among thousands.
+
+**Policy (normative, applies to every future change):**
+
+| Level | Sentinel | Used for | Prefix |
+|---|---|---|---|
+| **ALWAYS** | none | aborts, failed validations, impossible states, recovered errors | `***` in the message |
+| **DEBUG** | `FTCS_Debug_Mode` (default `true`) | state telemetry: who participates, what values are read, what was decided | none |
+| **TRACE** | `FTCS_Debug_Mode` **and** `FTCS_Debug_Trace` (default `false`) | per loop step / per tick / per group / per frame | none |
+
+Boot traces (`init.sqf`, `fn_executeDeployment`, `fn_loadDoctrineData`, `fn_spawnDoctrine`, `fn_parseEditorGroups`, `fn_applyDoctrine`, `fn_initCompanyCommand`) may stay unconditional: few, once per session, and they prove the system started.
+
+**Why a conditional is fine.** A boolean check costs nothing next to the `diag_log` it protects. Production software keeps its logging code and turns the level down; deleting diagnostics just forces someone to rewrite them next time.
+
+**Rule of thumb:** if the trace would be read while debugging a normal (working) system, it is DEBUG/TRACE. If it can only mean "something is wrong", it is ALWAYS.
+
+### Part B — `surfaceIsWater` reports the TERRAIN cell, not what stands on it
+
+**Symptom.** In trail march, followers piled up at both ends of a bridge. Traces showed:
+
+```
+[FTCS][TRAIL][RECORD] leader recorded a point ON WATER: [3428.58,5826.5,9.51]
+[FTCS][TRAIL][FOLLOW] *** 'Mortar Section' trail slot is ON WATER - AI cannot path there (bridge gap).
+```
+
+Yet the player confirms he walked **on the bridge deck**, never into the water, and the trail points rise from Z≈3.6 to Z≈12 across the crossing.
+
+**Verified cause.** `surfaceIsWater` samples the water cell of the **terrain** below the position. A bridge deck is an object placed ABOVE the water cell, so `surfaceIsWater` returns **`true`** for a unit standing on the bridge. Using it alone to reject "unwalkable" trail points therefore rejects every bridge crossing.
+
+**Correct test — height-aware:**
+
+```sqf
+// "really in the water" = surface is water AND the unit is at water level.
+// On a bridge the Z is several metres above the water cell -> NOT in water.
+private _onWater = surfaceIsWater _pos
+    && { ((_pos select 2) - (getTerrainHeightASL [_pos select 0, _pos select 1])) < 1.5 };
+```
+
+**Rules derived.**
+
+1. `surfaceIsWater` alone is NOT a walkability test. Always pair it with a height comparison when bridges, piers, fords or elevated roads are possible.
+2. A trail/anchor that records points it will later be followed into must record only **traversable** points, and "traversable" must be defined by the same rule the AI will apply.
+3. When followers pile up on BOTH sides of a feature, suspect the anchor/path rather than the followers: they are being sent somewhere unreachable.
+4. Long-offset groups can look healthy while short-offset ones fail (their sample lands on land). Always compare short vs long offsets before blaming the geometry.
+
+---
+
+## Lesson 14 — `nil` inside an array COLLAPSES the array (and deleting a registry key leaves a stale read)
+
+**Date:** 2026-11-14
+**Module:** `Functions/Movement/fn_formationsTrailQueueSync.sqf`, `fn_formationsGroupFollowTrail.sqf`
+**Type:** Lesson
+
+**Symptom (RPT, two errors around lines 60 and 99).** The trail queue sync raised
+`Error Undefined variable` / index-out-of-range at
+
+```sqf
+private _myPos = _x select 2;
+```
+
+even though every entry had been pushed with three elements.
+
+**Verified root cause.**
+
+```sqf
+private _pos = _entry getOrDefault ["trailTargetPosPrevious", nil];
+_entries pushBack [_x, _off, _pos];
+```
+
+Arma **collapses `nil` inside an array literal**: `[a, b, nil]` becomes `[a, b]`.
+The entry therefore had TWO elements whenever the group had no previous slot, and the
+later `select 2` failed. This is the same engine rule already documented inside
+`fn_registryInit.sqf` (the `FTCS_fnc_registrySet` comment about the 2-argument form) —
+it was simply not applied to this new code.
+
+**Second, silent bug in the same design.** `FTCS_fnc_registrySet` treats `nil` as
+"DELETE the key". Publishing `nil` for "nothing to inherit" therefore left the PREVIOUS
+tick's value in place, so a consumer could read a stale slot.
+
+**The fix (applied).**
+
+- Store "no slot" as an explicit EMPTY ARRAY, never `nil`:
+  ```sqf
+  private _pos = _entry getOrDefault ["trailTargetPosPrevious", []];
+  if (!(_pos isEqualType []) || { count _pos < 3 }) then { _pos = []; };
+  _entries pushBack [_x, _off, _pos];        // always 3 elements
+  ```
+- Publish the same G2 shape to the registry:
+  ```sqf
+  [_grpId, "trailQueueInheritPos", []] call FTCS_fnc_registrySet;   // not nil
+  ```
+- Consumer test becomes type-based instead of nil-based:
+  ```sqf
+  private _hasInherit = (_inheritedPos isEqualType [] && { count _inheritedPos >= 3 });
+  ```
+
+**Rules derived.**
+
+1. **Never let `nil` reach an array literal.** Use `[]`, `grpNull`, `objNull`, `-1` or a
+   sentinel — whatever keeps the element count stable. A collapsed array is invisible
+   until a `select` on a later index blows up far from the cause.
+2. **Never use `nil` as a registry value when the key must survive.** The setter deletes
+   on `nil`; the reader then returns the value written in a previous tick, which looks
+   like a working system that is simply out of date.
+3. When an array element can be "absent", define the absent representation explicitly in
+   the function header (here: `[]` = no previous slot / nothing to inherit).
+4. This is the third `nil`-related trap in this session (Lesson 7 `!A isEqualTo B`,
+   Lesson 9 undefined variable via `getOrDefault`, and this one). Treat every
+   `getOrDefault [_k, nil]` in new code as a bug until proven otherwise.
+
+---
+
+## Lesson 15 — Trail column crossing a CUT (bridge / gap / clearance): the record freeze IS the barrier, and the queue must chain by DOCTRINAL gap
+
+**Date:** 2026-11-15
+**Module:** `Functions/Movement/fn_formationsTrailQueueSync.sqf`, `Functions/Roads/fn_trailAdvanceAnchor.sqf`, `Functions/Formations/fn_formationsGroupFollowTrail.sqf`
+**Type:** Architecture / Design Note (direct guide for an AI)
+
+### The mechanism (do NOT "fix" it)
+
+Arma 3 cannot reliably produce a pathable point on a bridge deck: a group sent
+there ends up swimming underneath. FTCS therefore treats a crossing as a **cut in
+the walked trail**:
+
+```
+fn_trailAdvanceAnchor  ->  [_leaderPos, 0.5] call FTCS_fnc_navIsValidGround
+                           dz > 0.5 m  ->  DO NOT RECORD, trailHalted = true
+```
+
+While the leader is on the deck (`trailPath`) simply **stops growing**, and it
+resumes only when he reaches walkable ground on the far bank. This is DELIBERATE:
+`trailPath` must contain ONLY points the leader really walked on walkable ground,
+so `trailPath[i]` is always a valid AI destination. **The freeze is the barrier.**
+Any change that interpolates points across the cut (or that records elevated
+points) reinstates the swimming bug for the whole column.
+
+### The queue (fn_formationsTrailQueueSync)
+
+```
+maxIdx = (count trailPath) - 1                    // last recorded point = near bank
+
+front to back, ordered by trailOffsetDist ASCENDING (never allocationSlot):
+
+  natural_k = round(trailOffsetDist_k / recordStep)
+
+  * natural_k <= maxIdx and no car is waiting yet  -> ALREADY ACROSS (population A)
+    This pass writes nothing for it; the normal follower loop owns its seat.
+
+  * otherwise                                      -> IN QUEUE (latch: once one car
+    waits, everything behind it waits)
+        first car  : seat = maxIdx              (near bank - valid ground)
+        every next : seat = seat(front) + round((d_k - d_front) / recordStep)
+        if seat > maxIdx -> seat = maxIdx       (wait at the bank, never over the cut)
+```
+
+Published fields: `trailQueueIndex` (seat, `-1` = none), `trailQueueHasSeat`
+(boolean), `trailQueueTipIdx` (`maxIdx`). `trailSlotIndex` is **not** written
+here (single-writer rule).
+
+### Why "copy the seat of the car ahead" is WRONG
+
+Two cars with different footprints (a 2-man HQ cell in front of an 8-man squad)
+lose their spacing: the squad inherits the cell's seat and its front overlaps the
+cell's rear, so the engine compresses the column. The correct rule is to chain by
+the **doctrinal distance between the two offsets** (`trailOffsetDist`), which was
+fixed once by `fn_trailColumnSet`. That is why a car's advance is NOT a constant
+for the column: a big squad advances further than a small cell, and that is what
+keeps the spacing intact. Recomputing the gap from live `units` counts during a
+crossing is wrong for the same reason (casualties must not compact the column).
+
+### PROGRESSIVE RELEASE: each group waits for ITS OWN depth (do not break this)
+
+The anchor is seeded with **one** point (`[[leaderPos, 0]]`) and grows as the
+leader walks. A march ordered close to a bottleneck can reach it with only a few
+points recorded, so the groups deeper than the trail have no place to go.
+
+That state is NOT "the cut is open". Dragging those groups to the last recorded
+point (`maxIdx`) makes the WHOLE platoon walk to the leader and leave its slots
+empty - observed twice in game, first with `maxIdx = 0` (everyone onto the seeded
+point) and then with `maxIdx = 4` (everyone onto the leader's fresh track).
+
+**The rule (chosen by the designer): progressive release.**
+
+```
+can_move(k)  <=>  seat(k) <= maxIdx        # its own depth has been walked
+```
+
+- `fn_formationsTrailQueueSync` publishes `trailQueueHasSeat = false` and `-1` for
+  any car whose computed seat exceeds `maxIdx`, and does NOT advance the chain for
+  it: the next car chains from the last car that really holds a seat, so a waiting
+  car can never be overtaken.
+- `fn_formationsGroupFollowTrail` **holds** such a group with `doStop` where it was
+  placed - no move, no path, no speed change - and only starts walking once the
+  trail reaches it.
+
+The column therefore forms in cascade behind the leader, exactly like the original
+`headDist < trailOffsetDist + 2` waiting state, and NO group is ever sent to a
+point that is merely "the newest one".
+
+> Attempted and REJECTED: gating the whole column on `headNatural` ("nobody moves
+> until car 1 fits"). It looks equivalent but is not: car 1 is often the nearest
+group, so it fits almost immediately and the condition never fires while every car
+behind is still dragged onto `maxIdx`. The gate must be PER CAR.
+
+### Invariants an AI must not break
+
+1. `trailPath` is written ONLY by `fn_trailAdvanceAnchor`, and only with points
+   that pass `fn_navIsValidGround` (dz <= 0.5 m).
+2. `fn_formationsTrailQueueSync` reads the trail from the ANCHOR
+   (`FTCS_Trail_Anchor_PLT_<id> > "trailPath"`). A global `FTCS_Trail_Path` does
+   not exist; reading one silently yields `maxIdx = -1` and "no seat" forever.
+3. Column order for the queue is `trailOffsetDist` ascending. `allocationSlot`
+   belongs to the platoon formation (rewritten by the road column and by scout
+   detachment) and does not follow the trail order.
+4. The queue is a LATCH: the waiting population is always a contiguous tail of the
+   column. Never release a rear car while a car in front of it waits.
+5. "Nothing to inherit" is `-1` in a numeric field, never `nil` (Lesson 14) and
+   never a removed key (removing a hashmap key shifts every later key).
+
+### Still to do (known, open)
+
+- `fn_formationsGroupFollowTrail` does not consume `trailQueueHasSeat` /
+  `trailQueueIndex` yet: it still resolves every group by its own natural index,
+  so the queue is published but not obeyed. Consuming it is the next step.
+- `fn_formationsTrailCompactColumn` rewrites `trailOffsetDist` without telling the
+  queue; it must re-derive the chain (or be ordered between crossings).
+
+---
+
+## Lesson 16 — `private _x = <nil>` does NOT create the variable: `isEqualType` cannot guard a `nil`-returning getter
+
+**Date:** 2026-11-15
+**Module:** `Functions/Formations/fn_formationsGroupFollowTrail.sqf`, `Functions/Core/fn_registryInit.sqf` (`FTCS_fnc_registryGet`)
+**Type:** Lesson
+
+### Symptom (RPT)
+
+```
+Error in expression <_registryGet;
+    private _inQueueEarly = ((_queueFlagEarly isEqualType true) && { _queueFlagEarl...>
+  Error position: <_queueFlagEarly isEqualType true>
+Error Undefined variable in expression: _queueflagearly
+```
+
+reported at the *declaration* line, i.e. one line ABOVE the reported one, and only
+on the first tick of a trail march (3 groups = 3 errors, then silence).
+
+### Verified root cause
+
+`FTCS_fnc_registryGet` ends with:
+
+```sqf
+_entry getOrDefault [_key, nil];
+```
+
+so an ABSENT key returns **nil**. In SQF,
+
+```sqf
+private _queueFlagEarly = <nil>;      // the variable is NOT created
+private _inQueueEarly = (_queueFlagEarly isEqualType true);   // Undefined variable
+```
+
+Assigning `nil` leaves the variable **undeclared**. Any guard placed on the next
+line — including `isEqualType`, which is the usual idiom — never runs, because the
+read of the variable itself is what fails. The error is deterministic: the trail
+queue thread starts AFTER the follow threads, so on the first tick the key does
+not exist yet.
+
+### The fix (applied)
+
+Materialise every `nil`-capable read with `isNil` before use:
+
+```sqf
+private _queueHasSeat = [_groupID, "trailQueueHasSeat"] call FTCS_fnc_registryGet;
+if (isNil "_queueHasSeat") then { _queueHasSeat = false; };
+```
+
+Applied to `trailQueueHasSeat` (false), `trailQueueIndex` (-1) and
+`trailSlotIndex` (-1) in `fn_formationsGroupFollowTrail`.
+
+### Rules derived
+
+1. `isEqualType` / `typeName` guards are USELESS against `nil`: they are evaluated
+   on a variable that does not exist. Guard with `isNil` FIRST, then type-check.
+2. Every `call FTCS_fnc_registryGet` whose result is stored must be paired with an
+   `isNil` default. Reads placed directly inside a comparison (`(... call X) == "Y"`)
+   are safe; stored reads are not.
+3. This is Lesson 9 (a getter that silently yields a default) escalated: there the
+   default was an empty HashMap, here it is `nil`, and `nil` breaks the scope itself.
+4. Prefer `getOrDefault [_key, <default>]` at the CONSUMER (reach into the entry
+   once) over a getter that returns `nil`, when the default is known locally.
+
+---
+
+## Lesson 17 — `allocationSlot` ascending is NOT the column order: road and trail must walk the SAME explicit slot list
+
+**Date:** 2026-11-15
+**Module:** `Functions/Formations/fn_trailColumnSet.sqf`, `Functions/Formations/fn_formationsRoadColumnSet.sqf`
+**Type:** Lesson
+
+### Symptom (in game)
+
+The trail column did not follow the road-column order: the RTO (`HQ - Command
+Element`, slot 9) walked near the TAIL, and the 1st Rifle Squad's BAR Support Team
+led the file. Confirmed from the RPT seat dump:
+
+```
+'1st Rifle Squad - BAR Support Team'  natural=1     <- head of the file
+'HQ - Command Element'                natural=126   <- eighth
+```
+
+### Verified root cause
+
+`fn_trailColumnSet` ordered the chained groups with:
+
+```sqf
+_slot = <registry "allocationSlot">;   _chained pushBack [_slot, _gid, _x];
+_chained sort true;                    // ascending by allocationSlot
+```
+
+`allocationSlot` is the PLATOON FORMATION slot index, not a march position. The
+road column does not use it for ordering either: `fn_formationsRoadColumnSet`
+walks an explicit doctrine list:
+
+```sqf
+private _slotOrder = [9, 0, 4, 1, 2, 3, 10, 5];
+// 9 HQ Escort (RTO) -> 0 Vanguard -> 4 Plt Sgt -> 1 -> 2 -> 3 -> 10 Guide -> 5 Reserve
+```
+
+Ascending `allocationSlot` therefore produces `0,1,2,3,4,5,9,10`: slot 0 first and
+slot 9 (the RTO) almost last. The two columns were never the same column.
+
+### The fix (applied)
+
+`fn_trailColumnSet` now resolves each position with the SAME list:
+
+```sqf
+private _slotOrder = [9, 0, 4, 1, 2, 3, 10, 5];
+private _rank = _slotOrder find _slot;
+if (_rank < 0) then { _rank = 999; };   // 6/7/8 (forward scouts), no slot -> tail
+```
+
+Slots 6/7/8 are excluded exactly as the road column excludes them (they advance
+ahead of the leader). Groups without a listed slot keep their relative order at the
+tail, so nothing is dropped from the file.
+
+### Rules derived
+
+1. **"Same order as the road column" means the same `_slotOrder` array**, not "sort
+   by some numeric field". If the list ever changes in one function it must change
+   in the other, and the list should eventually live in ONE place.
+2. A registry field named `allocationSlot` answers "where in the platoon formation
+   is this group", which is a different question from "where in the march file".
+   Never use one as a proxy for the other.
+3. When a consumer "does not respect the order", check the PRODUCER of the ordering
+   (`trailOffsetDist` here) before the consumer that reads it. The queue and the
+   follower were faithfully reproducing a wrong sequence.
+
+---
+
+## PENDING-5 — `_slotOrder` is duplicated between the road and trail column functions
+
+**Date:** 2026-11-15
+**Status:** OPEN — refactor, NOT a bug. Do it when the road column is next touched.
+**Type:** Architecture / Design Note (direct guide for an AI)
+**Scope:** `Functions/Formations/fn_formationsRoadColumnSet.sqf`, `Functions/Formations/fn_trailColumnSet.sqf`
+
+### The duplication
+
+The march order of the column lives in two identical literals:
+
+```sqf
+// fn_formationsRoadColumnSet.sqf:42   and   fn_trailColumnSet.sqf  (_slotOrder)
+private _slotOrder = [9, 0, 4, 1, 2, 3, 10, 5];
+//                     HQ Escort (RTO) -> 0 -> 4 -> 1 -> 2 -> 3 -> 10 -> 5
+```
+
+Both are correct today (Lesson 17), so there is no functional bug. The risk is
+**drift**: the day the march doctrine changes and only one of them is edited, the
+road and trail columns silently put different groups in the same position of the
+file — the exact class of bug that took a full session to diagnose.
+
+### The planned fix
+
+1. New function `FTCS_fnc_columnSlotOrder` (module `Formations`) returning the list
+   (and, optionally, accepting an "include scouts" flag for a future use case).
+2. Register it in `description.ext` under `CfgFunctions > Formations` — **this
+   requires leaving the mission, passing through 3DEN and re-entering**, because
+   `description.ext` is not recompiled by an in-game restart.
+3. Replace both literals with `private _slotOrder = call FTCS_fnc_columnSlotOrder;`.
+4. Document the single source in `FTCS_Data_Structure_Reference.md` if the list is
+   ever exposed through a registry field (it is doctrine, so it may belong in the
+   platoon registry as `columnSlotOrder`, immutable, seeded once).
+
+### Invariant until then
+
+If either list is edited, **both must be edited in the same change**. Grep
+`_slotOrder` before submitting.
+
+---
+
+## Lesson 18 — A trail index must be measured FROM THE FRONT (`maxIdx - offset/step`), exactly like the road samples `headDist - offsetDist`
+
+**Date:** 2026-11-15
+**Module:** `Functions/Movement/fn_formationsTrailQueueSync.sqf`, `Functions/Formations/fn_formationsGroupFollowTrail.sqf`
+**Type:** Lesson
+
+### Symptom (in game)
+
+The trail column appeared REVERSED: the groups closest to the leader were sent
+furthest back and the tail walked near the commander. The order in the registry was
+verified correct (offset 1 = RTO, offset 133 = Guide), so the error was in the
+index, not in the ordering.
+
+### Verified root cause
+
+The seat was computed as a distance from the ORIGIN of the trail:
+
+```sqf
+private _naturalIdx = round (_offsetDist / _recordStep);   // WRONG
+```
+
+`trailPath` grows from the march start (index 0) to the leader (last index), so
+`offset / recordStep` addresses a point the leader walked `offset` metres after
+starting - not a point `offset` metres BEHIND him now. With 36 recorded points, the
+RTO (offset 1) was sent to index 1: what the leader walked 70 m ago.
+
+### The correct rule (already implemented by the road column)
+
+```sqf
+// fn_formationsGroupFollowRoad.sqf:147
+_sample = [(_headDist - _offsetDist) max 0, _dynPath] call _fnc_samplePathAtDistance;
+```
+
+In index form:
+
+```sqf
+private _maxIdx = (count _trailPath) - 1;
+private _seat   = _maxIdx - round (_offsetDist / _recordStep);
+```
+
+`seat >= 0` means the leader has already walked that depth (the group may move);
+`seat < 0` means it has not (the group HOLDS where it was placed). This single
+expression replaces both the "distance from origin" bug and the earlier
+"progressive release" clamp.
+
+### Rules derived
+
+1. Whenever a trail/road position is derived from a distance behind the leader,
+   **subtract from the FRONT** (`headDist` for arcs, `maxIdx` for indexes), never
+   add to the origin. Both column systems must use the same convention.
+2. Before inventing a rule, read the sibling implementation that already works
+   (`fn_formationsGroupFollowRoad` is the reference for every column behaviour).
+3. A "reversed column" symptom points at an inverted distance reference, not at the
+   sorting of the column: verify the ORDER (offsets/slots) before touching the math,
+   then verify the SEAT (index) with one concrete distance.
+
+---
+
+## Lesson 19 — Waking a group for a march is ONE function (`fn_groupAwakenForMarch`), not an inline AI block in every loop
+
+**Date:** 2026-11-15
+**Module:** `Functions/Formations/fn_groupAwakenForMarch.sqf` (new), `fn_formationsApplyPlatoonOrder.sqf`, `fn_formationsGroupFollowRoad.sqf`, `fn_formationsGroupFollowTrail.sqf`, `fn_applyCommandToTarget.sqf` (x2), `fn_platoonSetOperationalPhase.sqf` (x3)
+**Type:** Lesson + Architecture note
+
+### Symptom (in game)
+
+After ordering a TRAIL column the platoon stayed frozen: the leader walked and the
+squads remained at the start point, some catching up minutes later, others never.
+A second, structural problem surfaced while investigating: FIVE places in the code
+base repeated their own `enableAI "PATH"/"MOVE"` + `disableAI ...` block, which
+Rule 15 (Point 0) forbids ("at most three native AI commands per site; any change in
+unit behaviour goes through a standardised project function").
+
+### Verified root cause
+
+The platoon is deployed into the assembly area with movement AI frozen so the
+deployment can be inspected. Only `fn_formationsApplyPlatoonOrder` (cross-country)
+re-enabled it, inline. Road march, trail march, the command dispatcher and the
+phase setter each carried their own COPY of that block - and the trail loop had
+none at all, so `move` / `doFollow` were issued to sleeping units and ignored.
+
+Copying the block into the trail loop (what was done first) fixed the symptom but
+multiplied the violation.
+
+### The fix (applied)
+
+1. New `Functions/Formations/fn_groupAwakenForMarch.sqf`:
+
+   ```sqf
+   [_grp, _followUnit, _setColumnFormation] call FTCS_fnc_groupAwakenForMarch;
+   // per unit: enableAI "PATH"; enableAI "MOVE";
+   //           disableAI "AUTOCOMBAT"; disableAI "COVER"; doFollow _followUnit;
+   // optionally: _grp setFormation "COLUMN"
+   ```
+
+   It is the ONLY place in FTCS that issues those AI commands. TARGET, ROE, speed
+   mode, stance and radio protocol are deliberately left to the existing group
+   setters (`groupSetAwareMode` / `groupSetROE` / `groupSetSpeed` / `groupSetStance`).
+
+2. Every former inline block now calls it:
+   - `fn_formationsApplyPlatoonOrder` (phase < 3) - `false` (keeps the ordered formation)
+   - `fn_formationsGroupFollowRoad` - `true` (column), then adds TARGET/RADIOPROTOCOL/forceSpeed
+   - `fn_formationsGroupFollowTrail` - `true` (column), then adds RADIOPROTOCOL/forceSpeed
+   - `fn_applyCommandToTarget` (road + trail branches)
+   - `fn_platoonSetOperationalPhase` (phases 1/2/3) - `false`
+
+3. Registered in `description.ext` under `CfgFunctions > Formations`.
+
+### Rules derived
+
+1. **`disableAI "MOVE"` in the deployment is the reason a march needs a wake-up.**
+   A new march world that forgets it will look like a navigation bug (groups never
+   leave the start point) when it is an AI-state bug.
+2. **Never write `enableAI` / `disableAI` in a loop or a march routine.** Call
+   `FTCS_fnc_groupAwakenForMarch`. Grep `enableAI "MOVE"` before submitting: it must
+   appear only inside that file.
+3. When a march profile needs more than the awakener (no TARGET, no radio, engine
+   speed cap), add it AT THE CALL SITE next to the tick that depends on it, not by
+   growing the shared function.
+4. Adding a function to `description.ext` requires leaving the mission, passing
+   through 3DEN and re-entering: an in-game restart does not recompile CfgFunctions.
+---
+
+## Lesson 20 — `trailPath` indexes are NOT a uniform 2 m grid: a bridge crossing records ONE point spanning ~100 m
+
+**Date:** 2026-11-15
+**Module:** `Functions/Roads/fn_trailIndexAtArc.sqf` (new), `fn_formationsTrailQueueSync.sqf`, `fn_formationsGroupFollowTrail.sqf`
+**Type:** Lesson
+
+### Symptom (in game)
+
+After a bridge crossing the whole rear half of the column stayed behind: the Scout
+Team of the 2nd Squad, all four groups of the 3rd Squad and the Platoon Guide never
+received a position. The head of the column walked across correctly.
+
+### Verified root cause (RPT)
+
+```
+trail RESUMED at [3398.27,5846.52] dz=0.25
+[FTCS][TRAIL][RECORD] LARGE STEP 108.4m at point 55 -> segment spans water/props
+```
+
+While the leader is on the deck `fn_trailAdvanceAnchor` records NOTHING (by
+design). When it resumes it appends **at most one point per tick**, so the whole
+108 m crossing became a SINGLE segment. `headDist` grew by 108 m but `maxIdx` grew
+by exactly 1 (54 -> 55).
+
+The seat was computed as
+
+```sqf
+seat = maxIdx - round (offset / recordStep);   // ASSUMES 2 m PER INDEX
+```
+
+so every group deeper than ~110 m got a negative seat and waited forever:
+
+| group | offset | seat |
+|---|---|---|
+| HQ Command Element (RTO) | 1 | +54 |
+| 2nd Rifle Squad B | 135 | -13 |
+| 3rd Rifle Squad (x4) | 173..227 | -32..-59 |
+| Mortar Section / Guide | 243..265 | -67..-78 |
+
+The leader had already finished walking, so those seats could never rise: the
+groups were orphaned permanently.
+
+### The fix (applied)
+
+An index cannot be derived by division. It must be resolved **by arc** on the real
+polyline, exactly like the road column does with
+`sample(headDist - offsetDist)`:
+
+```sqf
+// Functions/Roads/fn_trailIndexAtArc.sqf
+[_trailPath, _targetArc] call FTCS_fnc_trailIndexAtArc;
+```
+
+The function walks the polyline summing the REAL `distance2D` between consecutive
+points and returns the index of the point on the SAFE side of the requested arc:
+
+- before point 0 -> 0
+- between points i and i+1 -> **i** (the EARLIER one)
+- past the last point -> last index
+
+Rounding BACK is deliberate: the later point may sit on the far side of a crossing,
+so rounding forward would push a group across the gap. No interpolation is done, so
+every returned index is still a point the leader really stood on.
+
+Callers updated:
+- `fn_formationsTrailQueueSync`: `natural = trailIndexAtArc(trail, headDist - offset)`,
+  negative -> HOLD; the order cap also resolves by arc instead of `frontIdx - gap/step`.
+- `fn_formationsGroupFollowTrail`: `_naturalIdx` resolved the same way.
+
+### Rules derived
+
+1. **Never divide a distance by `recordStep` to obtain a trail index.** The trail is
+   not a uniform grid: any tick where the recorder was halted (elevated ground) or
+   the frame rate dropped produces a long segment.
+2. `headDist` (arc, real metres) is the only distance measure that survives a jump.
+   Indexes are a way to ADDRESS points, not a unit of length.
+3. When resolving an arc that falls inside a segment, pick the EARLIER point for a
+   walked track (safe ground) and interpolate only for a geometric path (a road
+   centreline). The two column systems legitimately differ here.
+4. A "column half stuck after a bottleneck" symptom should immediately prompt
+   checking `maxIdx` growth against `headDist` growth in the RPT.---
+
+## Lesson 21 — A chain that RE-SPACES the column destroys it: round to the NEAREST trail point, and let order be the only constraint
+
+**Date:** 2026-11-15
+**Module:** `Functions/Roads/fn_trailIndexAtArc.sqf`, `Functions/Movement/fn_formationsTrailQueueSync.sqf`
+**Type:** Lesson
+
+### Symptom (in game)
+
+Every slot marker appeared drawn point on point, with no distance between them,
+and the tail of the column never received a seat. RPT seat dump:
+
+```
+off=1    -> seat=52
+off=14   -> seat=51
+off=33   -> seat=50
+off=46   -> seat=49
+off=68   -> seat=48
+off=84   -> seat=47
+off=103  -> seat=46
+off=122  -> seat=45
+```
+
+Thirteen to nineteen metres of doctrinal spacing collapsed into ONE index (2 m).
+
+### Verified root cause (two errors that compound)
+
+1. **The chain re-spaced the column.**
+
+   ```sqf
+   if (_frontIdx >= 0 && { _seat >= _frontIdx }) then {
+       _seat = _frontIdx - 1;      // ALWAYS exactly one index behind
+   };
+   ```
+
+   Enforcing order by forcing `frontIdx - 1` guarantees a 2 m step regardless of the
+   gap the doctrine assigned. The chain's job is ORDER, not spacing.
+
+2. **The arc resolver rounded BACK.**
+
+   ```sqf
+   if (_targetArc < (_arcAtPoint + _segLen)) exitWith { _j };   // always the earlier point
+   ```
+
+   With 2 m spacing and a downward round, the arc-derived seat of the NEXT car lands
+   on the same index as the previous one, so the `>= frontIdx` branch fired for
+   EVERY car and the `-1` became the real spacing.
+
+### The fix (applied)
+
+`fn_trailIndexAtArc` now returns the NEAREST point of the segment:
+
+```sqf
+if ((_targetArc - _arcAtPoint) <= (_arcAtNext - _targetArc)) then { _j } else { _j + 1 }
+```
+
+`fn_formationsTrailQueueSync` keeps the arc-derived seat untouched and uses
+`frontIdx - 1` ONLY as a collision guard (two offsets rounding to the same point):
+
+```sqf
+private _seat = _natural;                       // full doctrinal spacing
+if (_frontIdx >= 0 && { _seat >= _frontIdx }) then { _seat = _frontIdx - 1; };
+```
+
+### Rules derived
+
+1. **A queue enforces order; it must never compute spacing.** Spacing comes from
+   the doctrine (`trailOffsetDist` → arc → index). If a chain step is needed, the
+   column was mis-spaced upstream - fix that, do not compress it here.
+2. **When snapping a distance to a discrete grid, round to the nearest**, unless the
+   brand new value is unsafe (mid-crossing). Rounding in one direction accumulates
+   error down a chain; per-group rounding error is at most half a step.
+3. After any change to a seat formula, read the RPT dump as a sequence: if the seats
+   are `n, n-1, n-2, ...` the spacing is being computed, not preserved. Correct
+   spacing shows seat differences proportional to the offset differences.
+---
+
+## Lesson 22 — A trail column must walk the trail POINT BY POINT (cursor), not jump to its seat
+
+**Date:** 2026-11-15
+**Module:** `Functions/Formations/fn_formationsGroupFollowTrail.sqf`, `fn_trailColumnSet.sqf`
+**Type:** Architecture / Design Note
+
+### The problem this settles
+
+A trail march exists for ONE reason: every group steps on the exact points the
+leader walked, in the same order. Forwarding a group straight to its seat index
+(`_group move trailPath[seat]`) cannot guarantee that. The engine paths from the
+group's current position to that single point, so when the seat advances several
+indexes at once the group takes the SHORTEST route: it cuts corners, crosses
+diagonals and misses recorded points entirely.
+
+Observed in game: the column walked beside the leader's track instead of on it,
+and nothing marked the recorded points as visited.
+
+### The model (the "lane")
+
+Each group holds a CURSOR in the registry: the last trail point it has really
+reached.
+
+```sqf
+cursor(k)  : last index reached (writer: fn_formationsGroupFollowTrail)
+seat(k)    : ceiling published by the column (fn_formationsTrailQueueSync)
+next(k)    = min(cursor + 1, seat, maxIdx)      // ONE point ahead, never more
+```
+
+Every tick the follower sends `move` to `trailPath[next]`. The cursor advances
+only when the group's leader actually arrives:
+
+```
+arriveDist = max(1.5, segmentLength * 0.35)
+```
+
+The threshold is proportional because a segment is normally 2 m but a bridge
+crossing records ONE segment of ~100 m - a fixed 1.5 m would never be reached.
+
+### Why the bridge needs no special case any more
+
+While the trail is cut, `maxIdx` does not grow, so `cursor + 1` does not exist and
+the group simply holds its point on the near bank. When the leader records the
+first point on the far side, `cursor + 1` exists and the group is asked to walk
+THAT single real segment, which the engine resolves over the deck. One group per
+new point, front to back, with no queue state required to stop anything: the trail
+itself is the barrier.
+
+### Invariants
+
+1. `trailCursorIdx` is written ONLY by `fn_formationsGroupFollowTrail` and seeded
+   to `-1` by `fn_trailColumnSet` on every new order (a leftover index would point
+   into a re-seeded array).
+2. The seat is a CEILING, never a destination.
+3. The cursor never jumps more than one index per tick, so no point can be skipped
+   unless the 20 s timeout fires (logged with `***`, it is a real failure).
+4. A group whose ceiling equals its cursor is not "stuck": it is waiting its turn.
+   The timeout must not fire in that state.
+
+### Still to do
+
+- Port the same lane to the road column (ROAD), where `roadPath` plays the role of
+  `trailPath` and `roadOffsetDist` the role of the seat. NOT started.
+---
+
+## Lesson 23 — A 1-index lane stutters, and a doctrinal seat does not stop overtaking
+
+**Date:** 2026-11-15
+**Module:** `Functions/Formations/fn_formationsGroupFollowTrail.sqf`, `Functions/Movement/fn_formationsTrailQueueSync.sqf`
+**Type:** Lesson
+
+### Symptom (in game)
+
+Two symptoms, both introduced by the point-by-point lane of Lesson 22:
+
+1. **The column started and stopped every 2 m** ("walks 2 m, stops; walks 2 m,
+   stops"). It crawled, far slower than the leader.
+2. **Groups overtook each other** when one could not find a path: the one behind
+   walked past it.
+
+### Root causes
+
+1. **One index per tick is a pedometer, not a position.**
+
+   The follower target was `cursor + 1` and the loop ticked at **1 s**. A soldier
+   covers ~1.4 m in a second, so the 2 m target was never reached before the next
+   tick re-issued `move` to the same point. Every `move` restarts the AI's path, so
+   the group visibly braked, re-accelerated, braked again.
+
+2. **The seat ceiling was doctrinal only.**
+
+   `fn_formationsTrailQueueSync` capped a car with `frontIdx - 1` (Lesson 21
+   removed that because it destroyed the spacing), leaving the cap purely
+   doctrinal - each car's own arc. When the car in front stalled, the car behind
+   still had its own (larger... smaller) seat available and simply walked past.
+
+### The fix (applied)
+
+**Fluidity**
+
+- The cursor is now a POSITION, advanced by a `while` over every recorded point the
+  group leader is within reach of (`2.5 m`, scaled to `segLen * 0.35` for long
+  bridge segments). It can jump several indexes in one tick.
+- The walk target is a LOOK-AHEAD: `cursor + 3`, capped by the seat and `maxIdx`.
+  The group always has open ground ahead, so the engine keeps one continuous path.
+  The cursor still consumes every point in order, so no corner can be cut.
+- Tick reduced from **1 s to 0.35 s**.
+- CATCH-UP: if the group is more than 12 m from the point its cursor names (it was
+  placed elsewhere at order time, or it lagged while the trail grew), the cursor
+  scans the following 60 indexes and jumps to the nearest one. Without it a group
+  50 m from index 0 could never satisfy the reach test and stayed pinned forever.
+
+**Order**
+
+```sqf
+seat(k) = min( seatDoctrinal(k), seat(k-1) )
+```
+
+A car may never reach beyond the ceiling of the car in front. While the column
+flows, the doctrinal seat is the smaller value, so the `min` is a no-op and the
+spacing is untouched; during a blockage it bites and the car behind WAITS instead
+of overtaking.
+
+### Rules derived
+
+1. A per-tick cursor must be bounded by REAL progress, not by tick count. Measure
+   position, then derive the index.
+2. Always aim a few steps ahead (look-ahead) when the target is a dense point
+   sequence: aiming at the next point makes the agent brake at every point.
+3. Re-issuing `move` to the point the agent is already standing on is the classic
+   stutter: the target must be ahead of the current position whenever one exists.
+4. ORDER between agents in a chain is a `min` with the neighbour's CEILING, not a
+   re-derivation of the spacing. Spacing comes from doctrine; order comes from the
+   neighbour.
+5. Any index-based cursor needs a CATCH-UP rule, because the agent's start position
+   and the trail origin are unrelated.

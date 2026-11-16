@@ -29,11 +29,28 @@ private _accumulatedDist = 0;
 private _rearHeading = (_forwardHeading + 180) % 360;
 
 // Traverse connected road segments towards rearward direction
+// ROAD-DIAG: this loop is the place a BRIDGE breaks the path. `roadsConnectedTo`
+// returns no neighbours when the navmesh/road graph does not link the two banks
+// (common with hand-placed bridges, or bridges whose ends are not snapped to the
+// roadway). The loop then exits early and the code below projects straight ahead,
+// which can place waypoints IN THE WATER - exactly the "units refuse to cross"
+// symptom. The traces below tell these two cases apart.
+private _stepIdx = 0;
 while {_accumulatedDist < _requiredDistance} do {
+    _stepIdx = _stepIdx + 1;
     private _connected = roadsConnectedTo _currentSegment;
     private _candidates = _connected - _visited;
 
-    if (count _candidates == 0) exitWith {};
+    if (missionNamespace getVariable ["FTCS_Debug_Mode", false]) then {
+        diag_log format ["[FTCS][ROAD][BUILD] step %1 seg='%2' pos=%3 connected=%4 candidates=%5 accumulated=%6/%7",
+            _stepIdx, getText (configFile >> "CfgVehicles" >> (typeOf _currentSegment) >> "displayName"),
+            getPosATL _currentSegment, count _connected, count _candidates, round _accumulatedDist, _requiredDistance];
+    };
+
+    if (count _candidates == 0) exitWith {
+        diag_log format ["[FTCS][ROAD][BUILD] *** DEAD END after %1 steps at accumulated=%2m (required %3m) - path will be extended STRAIGHT, which may leave the road/water.",
+            _stepIdx, round _accumulatedDist, _requiredDistance];
+    };
 
     // Select candidate that best aligns with the rearward progression vector,
     // penalizing sharp heading changes to prefer straight continuation at junctions
@@ -90,6 +107,9 @@ if (_roadWidthOverride isEqualType 0 && {_roadWidthOverride > 0}) then {
 
 if (_accumulatedDist < _requiredDistance) then {
     // Project along last rear heading to fulfill full requested distance
+    // ROAD-DIAG: flag this in the log - a straight extrapolation is NOT road.
+    diag_log format ["[FTCS][ROAD][BUILD] *** EXTRAPOLATING %1m in a straight line from %2 (not on the road graph).",
+        round (_requiredDistance - _accumulatedDist), (_rawWaypoints select ((count _rawWaypoints) - 1))];
     private _lastPt = _rawWaypoints select (count _rawWaypoints - 1);
     for "_d" from 3 to (_requiredDistance - _accumulatedDist) step 3 do {
         _rawWaypoints pushBack (_lastPt getPos [_d, _rearHeading]);

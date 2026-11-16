@@ -43,6 +43,15 @@ if (isNil "FTCS_Debug_Mode") then {
     FTCS_Debug_Mode = true;
 };
 
+// Secondary TRACE sentinel (subordinate to FTCS_Debug_Mode). Gates extremely
+// verbose instrumentation - per loop step, per tick, per frame - that is only
+// wanted while investigating one specific problem. Rule 19 of the design notes:
+// ALL diagnostic traces go behind a sentinel; only REAL FAILURES log always
+// (prefixed with ***).
+if (isNil "FTCS_Debug_Trace") then {
+    FTCS_Debug_Trace = false;
+};
+
 missionNamespace setVariable ["FTCS_Platoon_Advance_Direction", 0];
 missionNamespace setVariable ["FTCS_Last_Commander_Dir", getDir player];
 

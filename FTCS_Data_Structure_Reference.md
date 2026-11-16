@@ -352,6 +352,26 @@ n      │     squad). Persistente: solo una nueva orden de formación la sobres
       ├── "roadColumnSide"    : SCALAR           -> Lado informativo de acera en marcha por carretera (-1 babor / +1 estribor / 0 centro). Escritor único: fn_formationsRoadColumnSet.
       ├── "roadTeamIndex"     : SCALAR           -> Índice numérico ordinal del sub-equipo/fireteam dentro de la escuadra (1, 2, 3...).
       │
+      ├── "trailOffsetDist"   : SCALAR           -> Arco doctrinal de la columna de estela (metros detrás del líder).
+      │     Escritor único: fn_trailColumnSet (al formar la columna) y fn_formationsTrailCompactColumn
+      │     (al compactar). NO es un asiento fijo por grupo: es la fuente de la cadena de cola.
+      ├── "trailSlotIndex"    : SCALAR           -> Asiento NATURAL del grupo, round(trailOffsetDist / recordStep).
+      │     Lo lee fn_formationsGroupFollowTrail. Los grupos que ya han cruzado un corte (un puente)
+      │     lo usan directamente; ningún otro escritor debe tocarlo (regla de escritor único).
+      ├── "trailQueueIndex"   : SCALAR           -> Asiento de COLA publicado por fn_formationsTrailQueueSync
+      │     (clase Movement). Sólo se escribe para los grupos que esperan tras un corte; -1 = sin asiento
+      │     válido (se mantienen en su posición). Consumidor previsto: fn_formationsGroupFollowTrail.
+      ├── "trailQueueHasSeat" : BOOLEAN          -> true = el grupo tiene asiento de cola válido en este tick;
+      │     false = debe mantener el terreno. Escritor único: fn_formationsTrailQueueSync.
+      ├── "trailQueueTipIdx"  : SCALAR           -> maxIdx de la traza grabada en este tick (tope global de la
+      │     columna). Escritor único: fn_formationsTrailQueueSync. Sirve para que el consumidor nunca pida un
+      │     índice que aún no existe en trailPath.
+      ├── "trailCursorIdx"    : SCALAR           -> CARRIL: último índice de `trailPath` que el grupo ha PISADO
+      │     de verdad. Escritor único: fn_formationsGroupFollowTrail (avanza +1 al llegar al punto).
+      │     Se siembra a -1 en fn_trailColumnSet en cada nueva orden. Consumidor: el propio bucle, que
+      │     ordena `move` al índice cursor+1 (acotado por el asiento de cola), NUNCA al asiento directo:
+      │     eso es lo que impide que el grupo corte camino y se salte puntos de la traza.
+      │
       └── "squadTarget"       : ARRAY (tupla target de 8 campos + opcional marca temporal)
             Blanco capturado PROPIO de esta escuadra mediante "Mark Target"
             (Targeting class). Tupla idéntica a la del target del comandante:
