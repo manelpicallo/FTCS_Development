@@ -210,10 +210,18 @@ private _tacticalPlatoonIndex = 1;
                 }
             };
 
-            // Detect if this squad is a mortar or heavy support section (unified group handling)
-            private _isMortarSquad = (toLower _doctrinalSquadName) find "mortar" >= 0 || (toLower _doctrinalSquadName) find "mortero" >= 0;
+            // Unified-squad detection is a DOCTRINE DATUM, never a name match.
+            // Rule 18: a display name ("... Mortar Section") must not decide code
+            // paths. The doctrine declares the unified squads explicitly through
+            // "unifiedSquads" (array of squad keys, usually the heavy/support
+            // section), so a weapons section that mixes mortars and HMGs keeps its
+            // fireteams instead of being flattened by the word "mortar" in its
+            // caption.
+            private _unifiedList = _doctrine getOrDefault ["unifiedSquads", []];
+            if (!(_unifiedList isEqualType [])) then { _unifiedList = []; };
+            private _isUnifiedSquad = (_squadId in _unifiedList);
 
-            if (_isMortarSquad) then {
+            if (_isUnifiedSquad) then {
                 /* 
                    ============================================================
                    UNIFIED SUPPORT / MORTAR SQUAD SETUP

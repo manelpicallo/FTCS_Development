@@ -83,6 +83,7 @@
     - **Centinelas disponibles (en `fn_registryInit`, sección 1):**
       - `FTCS_Debug_Mode` (BOOLEAN, default `true`): telemetría de estado — qué decide el sistema, qué valores lee, qué grupos participan.
       - `FTCS_Debug_Trace` (BOOLEAN, default `false`, subordinado al anterior): verbosidad extrema — por paso de bucle, por tick, por grupo, por frame. Solo cuando se investiga un problema concreto.
+      - `FTCS_Debug_Menu_Mode` (BOOLEAN, default `true`): **centinela de la CAPA DE MENÚS, independiente de los dos anteriores**. Elige qué UI se despliega (árbol debug con todo lo implementado accesible / menús reales del simulador) y si la capa de menús vuelca al RPT el estado y cada orden despachada. Se **lee una vez al arrancar y NO se alterna en partida**: la sesión empieza en un modo y sigue en él. No confundirlo con `FTCS_Debug_Mode`, que puede ser escrito por el backend.
     - **EXCEPCIÓN OBLIGATORIA — fallos reales:** abortos, validaciones fallidas, estados imposibles, referencias nulas y errores recuperados se registran **siempre**, sin centinela, con el prefijo `***` en el mensaje para que sean localizables de un vistazo. Un log saturado esconde el error verdadero; un log vacío esconde el fallo silencioso.
     - **Patrón de referencia:**
       ```sqf
@@ -100,6 +101,18 @@
       ```
     - **Excepción de arranque:** las trazas de inicialización (`init.sqf`, `fn_executeDeployment`, `fn_loadDoctrineData`, `fn_spawnDoctrine`, `fn_parseEditorGroups`, `fn_applyDoctrine`, `fn_initCompanyCommand`) pueden ser incondicionales: son pocas, únicas por partida y confirman que el sistema arrancó.
     - **Motivo:** el coste de un `if` es despreciable frente al `diag_log` que protege; y borrar el diagnóstico para «limpiar la versión final» obliga a rehacerlo la próxima vez. El código de diagnóstico se conserva y se apaga con el flag.
+
+20. **POLÍTICA DE ESTADO DE MENÚS: SOLO CENTINELAS Y REGISTRO (prohibido introspección de código):**
+    - La visibilidad, el estado enabled/disabled y la desaparición de CUALQUIER fila o submenú se decide EXCLUSIVAMENTE contra **centinelas**: campos de los registros (`FTCS_Platoons_Registry`, `FTCS_Groups_Registry_Table`) o flags booleanos de `missionNamespace` catalogados en `FTCS_Data_Structure_Reference.md`.
+    - **PROHIBIDO** que un gate, builder o resolver de menús inspeccione estado interno de funciones (variables locales de hilos, contenidos de HashMaps de geometría tipo anclas, existencia de hilos `spawn`, markers de debug, variables private filtradas) para decidir si una opción está activa.
+    - El flujo obligatorio es UNIDIRECCIONAL: el código de juego (dispatcher, marcha, compact…) **escribe** su estado en el registro o en el centinela correspondiente en el momento del cambio de estado; la capa de menús **solo lee** esos campos catalogados. Nunca al revés, nunca introspección.
+    - Si un gate necesita un dato que no existe como campo de registro o centinela, el fix correcto es AÑADIR el campo (escritor único + documentación en `FTCS_Data_Structure_Reference.md`), nunca leer el estado interno del código.
+    - Catálogo mínimo de centinelas de menú (detalle completo en `FTCS_Data_Structure_Reference.md`):
+      - `FTCS_Platoons_Registry[pltId]["movementTechnique"]` → modo de marcha del pelotón (gates de columnas).
+      - `FTCS_Platoons_Registry[pltId]["orderState"]` → MARCH/HALTED/REJOINING (gates de halt/rejoin).
+      - `FTCS_Platoons_Registry[pltId]["currentPhase"]` → fase operacional (gates de fase y march).
+      - `FTCS_Groups_Registry_Table[groupId]["movingMode"]` → modo por grupo (gates de squad).
+      - `FTCS_Debug_Menu_Mode` → centinela de la capa de menús (Regla 19).
 
 **Validación contra este documento:**
 

@@ -1,4 +1,4 @@
-# FTCS - Programming Lessons Learned (Base de Conocimiento Técnica)
+﻿# FTCS - Programming Lessons Learned (Base de Conocimiento TÃ©cnica)
 
 <!--
     PURPOSE:
@@ -66,10 +66,8 @@
 | 23 | 2026-11-15 | Lesson | A 1-index lane stutters (target = `cursor+1` + 1 s tick makes the AI brake every 2 m) and a doctrinal seat does not stop overtaking. Fix: cursor = POSITION (while loop over reached points), LOOK-AHEAD target, 0.35 s tick, catch-up scan, and `seat(k) = min(seat(k-1), doctrinal(k))` | `fn_formationsGroupFollowTrail.sqf`, `fn_formationsTrailQueueSync.sqf` |
 | 24 | 2026-11-16 | Lesson | Two groups may NEVER share the same `trailOffsetDist`: the queue's `_gapIdx` floor (>= 1) turns a tie into a forced 2 m step. Trail compact gives each pair member its own arclength (+1 m) and reseeds `trailLaneTargetIdx` | `fn_formationsTrailCompactColumn.sqf`, `fn_formationsTrailQueueSync.sqf` |
 | 25 | 2026-11-16 | Lesson | A stuck-group timeout must release to the SEAT (`min(_slotIndex, _maxIdx)`), never to `target+1` (retries the same failure) and never past the seat (breaks the queue's single-writer rule) | `fn_formationsGroupFollowTrail.sqf` |
-| 26 | 2026-11-16 | Lesson | A `missionNamespace` GLOBAL (`FTCS_Company_Data`) used as the receiver of `getOrDefault` raises "Undefined variable" on the NEXT line and aborts the whole function - inside a menu builder that means the menu NEVER OPENS (Compact row unreachable) | `fn_openSubordinateMenu.sqf` |
-| **PENDING-6** | 2026-11-16 | **OPEN Audit** | Grep for globals used as `getOrDefault` receivers (`FTCS_Company_Data`, `FTCS_Groups_Registry_Table`, `FTCS_Config` without `missionNamespace getVariable`); one found in `fn_openSubordinateMenu` (fixed). Audit the rest of the UI builders | all `fn_*` in Interactions/Core |
+| **PENDING-6** | 2026-11-16 | **OPEN Audit (PRIORIDAD)** | Globals used as receivers (`getOrDefault` / `forEach` / `select`) without `missionNamespace getVariable`. Tercera vez que aparece (Lecciones 26, 35): `fn_openSubordinateMenu` y `fn_commandMenusRefresh` corregidos, pero un grep inicial encontrÃ³ ~72 coincidencias en el proyecto. **Auditar fichero a fichero**: solo rompen en posiciÃ³n de RECEPTOR; el resto se deja con comentario. Grep: `FTCS_(Groups_Registry_Table|Company_Data|Platoons_Registry|Config)\s*(getOrDefault|select|forEach)` | todo `Functions/` |
 | 27 | 2026-11-16 | Lesson + Arch/Design | The trail TRIM must cut against the OLDEST ARC THE COLUMN OCCUPIES (`trailMinSeatArc`, published by the queue), never against the doctrinal `maxTrailOffset`, and only in BATCHES (>=10 pts). A per-tick trim renumbers every persisted index continuously | `fn_trailTrimToArc.sqf` (new), `fn_trailAdvanceAnchor.sqf`, `fn_formationsTrailQueueSync.sqf`, `fn_trailColumnSet.sqf` |
-| 28 | 2026-11-16 | Lesson + Arch/Design | `private` inside a `for` body lives in the SCRIPT scope: a re-entrant menu rebuild wipes its own loop variables (20 "Undefined variable" errors in one second, menu never opens). Fix: hoist declarations + re-entrancy sentinel + extract the rebuild to `fn_commandMenusRefresh` (new `Functions/UI`) | `fn_commandMenusRefresh.sqf` (new), `fn_openSubordinateMenu.sqf`, `fn_applyCommandToTarget.sqf` |
 | 29 | 2026-11-16 | Lesson | A column resolver must filter participants with the SAME predicate as the queue (`platoonId` + `movingMode == FOLLOWING_TRAIL` + `offset > 0`). `trailOffsetDist` survives a road march, so `offset > 0` alone let ghosts steal a pair and left the last two real teams uncompacted | `fn_formationsTrailCompactColumn.sqf` |
 | 30 | 2026-11-16 | Lesson | The TRIM floor must protect the DEEPEST offset of the column INCLUDING WAITING groups (no seat yet), not only seated ones. A seated-only floor trimmed the trail to 83-99 pts (~170-200 m) while the column needs 217 m: the tail held 32 min and got a bogus seat | `fn_formationsTrailQueueSync.sqf`, `fn_trailTrimToArc.sqf`, `fn_trailColumnSet.sqf` |
 | 31 | 2026-11-16 | Lesson | A stuck-group escape must skip ONE index, never jump to the seat: `move <seat>` is a pathfinding request, so Arma takes the shortest route and the group cuts across the track ("they overtake the whole file") | `fn_formationsGroupFollowTrail.sqf` |
@@ -78,26 +76,26 @@
 
 ---
 
-## Lesson 1 — `continue` inside `forEach` breaks SQF compilation with "Error in expression / 0 elements provided, 3 expected"
+## Lesson 1 â€” `continue` inside `forEach` breaks SQF compilation with "Error in expression / 0 elements provided, 3 expected"
 
 **Date:** 2026-11-13
 **Module:** `Functions/Targeting/fn_targetPersistentMarker.sqf` (Draw3D mission event handler)
 **Symptom:**
 
 - Recurring RPT error `Error in expression <...> / 0 elements provided, 3 expected`, always pointing at or near the `drawIcon3D` call that draws the squad-name caption (reported around "line 109" / "l109" in the RPT).
-- The error **moved to different line numbers** (66 → 73 → 109) as guards and code were added/removed, which made it look like a data problem.
+- The error **moved to different line numbers** (66 â†’ 73 â†’ 109) as guards and code were added/removed, which made it look like a data problem.
 - The crash happened every frame, deterministically, ONLY when the Draw3D handler was re-spawned (e.g. after `targetClearAllSquads` wiped targets and a new capture re-created the handler). Moving/re-marking a target while the old handler was still alive worked fine.
 
 **Wrong hypotheses we chased (and why they failed):**
 
-1. "The marker position array is nil/partially cleared mid-frame" → added `typeName`/SCALAR guards everywhere. Did NOT fix it: the failure happens at COMPILE time of the handler closure, before any guard can run.
-2. "The engine is running an old version of the file" → false; the RPT error line moved with our edits, proving the new file was loaded.
-3. "`drawIcon3D` receives a 0-element array" → the array literal was correct; the real problem was upstream in the same expression.
+1. "The marker position array is nil/partially cleared mid-frame" â†’ added `typeName`/SCALAR guards everywhere. Did NOT fix it: the failure happens at COMPILE time of the handler closure, before any guard can run.
+2. "The engine is running an old version of the file" â†’ false; the RPT error line moved with our edits, proving the new file was loaded.
+3. "`drawIcon3D` receives a 0-element array" â†’ the array literal was correct; the real problem was upstream in the same expression.
 
 **Verified root cause (researched against the BI wiki, [continue - BI Community Wiki](https://community.bistudio.com/wiki/continue)):**
 
-- The SQF keyword `continue` (introduced in Arma 3 v1.92) is **only supported in `while do`, `for do` and `do..while` loops**. It is **NOT supported inside `forEach` loops** — the [forEach](https://community.bistudio.com/wiki/forEach) wiki page documents no `continue` support either.
-- When the SQF parser finds `continue` in a `forEach` body, it treats it as an orphan binary operator and **consumes the following expression** (in our case the `drawIcon3D [...]` array literal, whose parameters come in 3 groups — hence "3 expected") as its operands. The closure **fails to compile**, and because a `Draw3D` handler is recompiled/evaluated every frame, the error repeats every frame.
+- The SQF keyword `continue` (introduced in Arma 3 v1.92) is **only supported in `while do`, `for do` and `do..while` loops**. It is **NOT supported inside `forEach` loops** â€” the [forEach](https://community.bistudio.com/wiki/forEach) wiki page documents no `continue` support either.
+- When the SQF parser finds `continue` in a `forEach` body, it treats it as an orphan binary operator and **consumes the following expression** (in our case the `drawIcon3D [...]` array literal, whose parameters come in 3 groups â€” hence "3 expected") as its operands. The closure **fails to compile**, and because a `Draw3D` handler is recompiled/evaluated every frame, the error repeats every frame.
 - This explains why the "fix" never worked regardless of runtime guards: **the guards were in code that never got to run**, because the enclosing closure could not even be compiled.
 
 **The fix that worked (applied and verified in-game):**
@@ -125,21 +123,21 @@
   } forEach FTCS_Groups_Registry_Table;
   ```
 
-- Rule of thumb: **inside `forEach`, use nested `if/then` (or an `if (...) then { ... } else { ... };` structure) to skip iterations — never `continue`.** `continue` is legal only in `while do` / `for do` / `do..while` loops (existing valid uses in this project: `fn_formationsGroupFollowTrail.sqf`, `fn_marchStuckWatchdog.sqf` — both `while` loops).
+- Rule of thumb: **inside `forEach`, use nested `if/then` (or an `if (...) then { ... } else { ... };` structure) to skip iterations â€” never `continue`.** `continue` is legal only in `while do` / `for do` / `do..while` loops (existing valid uses in this project: `fn_formationsGroupFollowTrail.sqf`, `fn_marchStuckWatchdog.sqf` â€” both `while` loops).
 
-**Debugging meta-lesson:** when an SQF error keeps appearing at "the line of a big array literal" and moves around as unrelated code is edited, suspect a **parse/compile-level problem in the same expression or an earlier statement in the same closure** (orphan keyword, unbalanced brackets, binary operator misparse) — not a runtime data problem. Adding more runtime guards cannot fix a closure that never compiles.
+**Debugging meta-lesson:** when an SQF error keeps appearing at "the line of a big array literal" and moves around as unrelated code is edited, suspect a **parse/compile-level problem in the same expression or an earlier statement in the same closure** (orphan keyword, unbalanced brackets, binary operator misparse) â€” not a runtime data problem. Adding more runtime guards cannot fix a closure that never compiles.
 
 ---
 
-## Lesson 2 — Mission-folder linker (`tools/LinkMission.ps1` + `LinkMission.bat`): NTFS Junctions + hardlinks keep ONE versioned codebase for every terrain
+## Lesson 2 â€” Mission-folder linker (`tools/LinkMission.ps1` + `LinkMission.bat`): NTFS Junctions + hardlinks keep ONE versioned codebase for every terrain
 
 **Date:** 2026-11-13
 **Type:** Architecture / Design Note (direct guide for an AI)
-**Module:** `LinkMission.bat` (repo root) → `tools/LinkMission.ps1`
+**Module:** `LinkMission.bat` (repo root) â†’ `tools/LinkMission.ps1`
 
 **Problem it solves:**
 
-- Arma 3 identifies each mission by `<MissionName>.<Terrain>` folder name, so testing the same FTCS codebase on a new terrain requires a NEW mission folder — and a NEW, terrain-specific `mission.sqm` that Eden refuses to share.
+- Arma 3 identifies each mission by `<MissionName>.<Terrain>` folder name, so testing the same FTCS codebase on a new terrain requires a NEW mission folder â€” and a NEW, terrain-specific `mission.sqm` that Eden refuses to share.
 - Copying `Functions/`, `Doctrines/`, `init.sqf`, etc. into every mission folder would fork the codebase and pollute the GitHub history.
 
 **Architecture ("repo without mission.sqm"):**
@@ -148,21 +146,21 @@
 - `LinkMission.bat` (repo root) runs `tools/LinkMission.ps1`, which asks for the destination mission folder name and that mission's Eden-generated `mission.sqm`, then:
   1. Creates an NTFS **Junction** (no admin rights needed, unlike symbolic links) inside the destination mission folder for every SHARED item: `Functions`, `Doctrines`, `tools`, and hardlinks for shared files `description.ext`, `init.sqf`, `LinkMission.bat`. Editing code in EITHER folder edits the SAME files.
   2. Copies as REAL local files the per-mission exclusives: `mission.sqm` (each terrain keeps its own world).
-- Existing destinations are handled safely: previous junctions are repositioned with `.Delete()` on the reparse point only (NEVER `Remove-Item -Recurse` through a junction — on PowerShell 5.1 it can traverse INTO the repo and delete the real codebase); real files/folders are only replaced after explicit user confirmation.
+- Existing destinations are handled safely: previous junctions are repositioned with `.Delete()` on the reparse point only (NEVER `Remove-Item -Recurse` through a junction â€” on PowerShell 5.1 it can traverse INTO the repo and delete the real codebase); real files/folders are only replaced after explicit user confirmation.
 
 **Invariants an AI must NOT break:**
 
 - NEVER delete a junction with recursive filesystem tools; delete only the link itself.
-- `mission.sqm` must NEVER be linked/hardlinked into the repo — it stays a per-mission local copy (a generic mission.sqm breaks Eden loading on other terrains).
+- `mission.sqm` must NEVER be linked/hardlinked into the repo â€” it stays a per-mission local copy (a generic mission.sqm breaks Eden loading on other terrains).
 - Shared-item lists live in the `$SharedItems` / `$LocalFiles` arrays at the top of `LinkMission.ps1`; any new top-level shared folder or file of the project must be added there, or new missions will silently miss it.
 - Workflow for a new terrain: 1) create+save the empty mission in Eden (generates its mission.sqm), 2) run `LinkMission.bat` from the repo, pointing at that mission.sqm.
 
 ---
 
-## RULE 0 (POINT ZERO — ABSOLUTE DIRECTIVE) — Doctrine display names are FORBIDDEN as code identifiers
+## RULE 0 (POINT ZERO â€” ABSOLUTE DIRECTIVE) â€” Doctrine display names are FORBIDDEN as code identifiers
 
 **Date:** 2026-11-14
-**Status:** PERMANENT DIRECTIVE — every AI working on FTCS must follow this to the letter.
+**Status:** PERMANENT DIRECTIVE â€” every AI working on FTCS must follow this to the letter.
 **Scope:** ALL functions, ALL modules, without exception.
 
 **The directive:**
@@ -177,22 +175,22 @@
 - **Why:** registry keys built from `groupId` ARE doctrine display names in this
   project (`FTCS_Groups_Registry_Table` keys are `"2nd Rifle Squad - Rifle Team A"`).
   Matching them against synthetic prefixes such as `format ["SQD_%1_", _pltId]`
-  NEVER matches (it silently yields zero results — no error, just missing
+  NEVER matches (it silently yields zero results â€” no error, just missing
   participants, exactly the class of bug seen in `fn_platoonHaltRejoin.sqf`).
 - **What to use instead (internal references ONLY):**
   - Group OBJECTS (`_grp`, `grpNull`-checked) resolved from the seeded registries
     (`FTCS_Platoons_Registry > pltId > "squads"`), never re-derived from names.
   - Registry-stamped LINK FIELDS written by `fn_registryInit`: `parentSquadGroup`
-    (fireteam → its squad group object) and equivalent hierarchy stamps. Family
+    (fireteam â†’ its squad group object) and equivalent hierarchy stamps. Family
     membership is resolved by OBJECT REFERENCE equality (`_grp in _squadList`,
     `_entry get "parentSquadGroup" == _sqdGrp`), never by name.
   - Numeric platoon IDs (`FTCS_Player_Platoon_ID`) for platoon-level state.
-- **Hierarchy invariant (mandatory for EVERY movement/order function — platoon,
+- **Hierarchy invariant (mandatory for EVERY movement/order function â€” platoon,
   squad, HALT, REJOIN, marches, formations):**
   1. The lieutenant is the platoon anchor; squads' LEADER groups occupy the
-     lieutenant-assigned slots (0–12) and follow the lieutenant (REL/ABS).
-  2. ALL other groups inside a squad follow their OWN SQUAD LEADER — never the
-     lieutenant — with formation geometry preserved.
+     lieutenant-assigned slots (0â€“12) and follow the lieutenant (REL/ABS).
+  2. ALL other groups inside a squad follow their OWN SQUAD LEADER â€” never the
+     lieutenant â€” with formation geometry preserved.
   3. Sole exception: groups explicitly re-assigned to a lieutenant-directed slot
      (e.g. scouts to slots 5/6/7/8/11/12) are temporarily anchored to the
      lieutenant, until re-anchored back to their squad leader.
@@ -205,7 +203,7 @@ are no exceptions.
 
 ---
 
-## Lesson 3 — HashMap key order is NOT deterministic: "first team found" as the squad anchor silently misclassified squads as fireteams
+## Lesson 3 â€” HashMap key order is NOT deterministic: "first team found" as the squad anchor silently misclassified squads as fireteams
 
 **Date:** 2026-11-14
 **Module:** `Functions/Core/fn_registryInit.sqf` (platoon registry seeding), `Functions/Formations/fn_platoonHaltRejoin.sqf` (HALT/REJOIN)
@@ -216,7 +214,7 @@ are no exceptions.
 - `[FTCS][HALT] squad '<X>' : N fireteams collected` printed, as "squads", groups that are in fact FIREteams and HQ sub-teams:
   `1st Rifle Squad - BAR Support Team`, `HQ - 1st Platoon (Support Element)`, `3rd Rifle Squad - Rifle Team A`.
 - After REJOIN, the slot that should sit behind the platoon leader appeared **in front of him**, and slots 9/10 ended up bunched behind the leader out of order, while slots 1/2/4 looked fine.
-- The shift and rejoin bearings for the same group differed by a constant **+45°** (e.g. shift 247° vs rejoin 293°), and one group changed distance (38.8 m -> 18 m).
+- The shift and rejoin bearings for the same group differed by a constant **+45Â°** (e.g. shift 247Â° vs rejoin 293Â°), and one group changed distance (38.8 m -> 18 m).
 
 **Verified root cause:**
 
@@ -225,24 +223,24 @@ are no exceptions.
    { private _g = (_y) getOrDefault ["group", grpNull];
      if (!isNull _g) exitWith { _first = _g; }; } forEach _teams2;
    ```
-   **SQF HashMap iteration order is NOT insertion order and is not guaranteed stable.** The "first" team is arbitrary — sometimes `TEAM_2` (a BAR support element), sometimes the HQ `Support Element`. That arbitrary group then became:
+   **SQF HashMap iteration order is NOT insertion order and is not guaranteed stable.** The "first" team is arbitrary â€” sometimes `TEAM_2` (a BAR support element), sometimes the HQ `Support Element`. That arbitrary group then became:
    - the entry in `FTCS_Platoons_Registry > pltId > "squads"`, i.e. what the platoon treats as a squad, **and**
    - the `parentSquadGroup` stamped on every team of that squad, i.e. what fireteams treat as their squad leader.
-2. Consequence: HALT/REJOIN classified fireteams as squads. The real squad leader group appeared nowhere, so a fireteam received a platoon-slot re-anchor (`mvFormationShift`) while its siblings followed it as if it were the leader → geometry collapsed around the leader.
-3. The +45° discrepancy was a **second, independent bug**: the shift projected the anchor with `platoonAdvanceAxis`, and the rejoin re-projected it with `_rejoinFacing` computed from a value that had been rewritten in between. Two projections of the same offset with different axes.
+2. Consequence: HALT/REJOIN classified fireteams as squads. The real squad leader group appeared nowhere, so a fireteam received a platoon-slot re-anchor (`mvFormationShift`) while its siblings followed it as if it were the leader â†’ geometry collapsed around the leader.
+3. The +45Â° discrepancy was a **second, independent bug**: the shift projected the anchor with `platoonAdvanceAxis`, and the rejoin re-projected it with `_rejoinFacing` computed from a value that had been rewritten in between. Two projections of the same offset with different axes.
 
 **The fix (applied):**
 
 - `fn_registryInit` now resolves the anchor **deterministically**, using the doctrinal `"type"` field that `fn_parseEditorGroups` already stamps on each team (`TEAM_1`/`TEAM_2`/`TEAM_3`/`COMMAND`):
-  1. unified squad → its `"group"`;
-  2. multi-team → the team whose type is `TEAM_1` (or `COMMAND`);
+  1. unified squad â†’ its `"group"`;
+  2. multi-team â†’ the team whose type is `TEAM_1` (or `COMMAND`);
   3. the team whose `leader` is the squad's `"leader"` (name-free);
-  4. HQ squads → the `TEAM_3`/`GUIDE`/`SECURITY` element;
+  4. HQ squads â†’ the `TEAM_3`/`GUIDE`/`SECURITY` element;
   5. parser's squad-level `"group"`;
   6. first resolved group (malformed doctrines only).
 - Two new registry fields, seeded by the same pass and documented in `FTCS_Data_Structure_Reference.md`:
-  - `"squadId"` — the doctrinal squad key (`"SQD_1_1"`), so teams can be grouped without reading the doctrine;
-  - `"isSquadLeaderGroup"` — `true` **only** on the squad anchor.
+  - `"squadId"` â€” the doctrinal squad key (`"SQD_1_1"`), so teams can be grouped without reading the doctrine;
+  - `"isSquadLeaderGroup"` â€” `true` **only** on the squad anchor.
 - `fn_platoonHaltRejoin` now splits squad vs fireteam using those fields (`parentSquadGroup` + `isSquadLeaderGroup`), and a fireteam with no valid anchor is logged and skipped instead of being re-anchored to the lieutenant (Point 18 invariant).
 - `continue` inside `forEach` was removed (Lesson 1) and replaced by a positive `if`.
 - A `[FTCS][REGISTRY] plt N squads: ...` line now prints the resolved anchors at seed time, so this class of bug is visible in one glance.
@@ -250,12 +248,12 @@ are no exceptions.
 **Meta-lesson for future code:**
 
 - **Never** derive hierarchy membership from the iteration order of a HashMap, from "first element", or from `groupId` strings (Point 18). Derive it from an explicit field (`type`, `isSquadLeaderGroup`, `squadId`) seeded once at init.
-- If a consumer needs identity data the registry does not carry, the fix is to **add the field in `fn_registryInit`** and document it — never to re-read `FTCS_Company_Data` at runtime (RULE 16).
+- If a consumer needs identity data the registry does not carry, the fix is to **add the field in `fn_registryInit`** and document it â€” never to re-read `FTCS_Company_Data` at runtime (RULE 16).
 - When two functions project the same geometry, they must use the **same** axis source (`fn_platoonAdvanceAxis`); otherwise the difference shows up as a constant angular offset.
 
 ---
 
-## Lesson 4 — `leader _group` is NOT the doctrine commander: Arma 3 picks the group leader by its own rules
+## Lesson 4 â€” `leader _group` is NOT the doctrine commander: Arma 3 picks the group leader by its own rules
 
 **Date:** 2026-11-14
 **Module:** `Functions/Core/fn_registryInit.sqf` (`roleKey` seeding)
@@ -272,32 +270,32 @@ The Command Element of the platoon HQ was registered with the **Radio Operator**
 **Verified root cause:**
 
 - The first implementation resolved `roleKey` by inverting the squad's `assignedRoles` map (`roleVar -> unit`) and matching against `leader _group`.
-- **Arma 3 decides `leader _group` on its own** (leadership skill, seniority, insertion order). When a command group contains several doctrinal roles — the classic case is the platoon leader together with his RTO inside the same `Command Element` group — the engine may resolve the group leader to the RTO.
-- Consequence: "the role of the group leader" ≠ "the role of command present in the group". They are two different questions and only the second one is what FTCS needs.
+- **Arma 3 decides `leader _group` on its own** (leadership skill, seniority, insertion order). When a command group contains several doctrinal roles â€” the classic case is the platoon leader together with his RTO inside the same `Command Element` group â€” the engine may resolve the group leader to the RTO.
+- Consequence: "the role of the group leader" â‰  "the role of command present in the group". They are two different questions and only the second one is what FTCS needs.
 
 **The fix (applied):**
 
 - `roleKey` is now the **highest-ranked doctrine role present in `units _group`**, resolved by iterating `assignedRoles` and keeping the role whose unit belongs to the group. Explicit priority:
-  1. `PLT_<N>_LEADER` → 100
-  2. any `*_LEADER` (`SQD_<N>_<M>_LEADER`, ...) → 80
-  3. any `*SERGEANT` → 60
-  4. any other doctrine role → 40
+  1. `PLT_<N>_LEADER` â†’ 100
+  2. any `*_LEADER` (`SQD_<N>_<M>_LEADER`, ...) â†’ 80
+  3. any `*SERGEANT` â†’ 60
+  4. any other doctrine role â†’ 40
 - Result: the Command Element now reports `role='PLT_1_LEADER'` even when the RTO is the engine-selected group leader.
 
 **Why the player-driven platoon was never affected:**
 
-- When the player IS the platoon leader, the code moves him out of the HQ group, and the follow pipeline identifies the commander through `isPlayer _leader` / `FTCS_Platoon_Leader_Unit — never through `roleKey`.
+- When the player IS the platoon leader, the code moves him out of the HQ group, and the follow pipeline identifies the commander through `isPlayer _leader` / `FTCS_Platoon_Leader_Unit â€” never through `roleKey`.
 - The bug only becomes visible with an **AI platoon leader** (autonomous platoons) or at **company scale** (several platoons with their own AI lieutenants), which is exactly Etapa B of the project roadmap.
 
 **Rules derived:**
 
 1. Never infer a doctrinal rank from `leader _group`, `vehicleVarName`, or group membership order. Doctrine ranks come from `assignedRoles` and must be ranked explicitly.
-2. When a field must answer "who commands here?", make sure the consumer also asks the right question: **current UI-driven platoon** → `isPlayer` / `FTCS_Platoon_Leader_Unit`; **AI / company scale** → `roleKey`.
-3. Any registry field whose value can differ from the engine's own notion of leadership must say so in `FTCS_Data_Structure_Reference.md` — done for `roleKey`.
+2. When a field must answer "who commands here?", make sure the consumer also asks the right question: **current UI-driven platoon** â†’ `isPlayer` / `FTCS_Platoon_Leader_Unit`; **AI / company scale** â†’ `roleKey`.
+3. Any registry field whose value can differ from the engine's own notion of leadership must say so in `FTCS_Data_Structure_Reference.md` â€” done for `roleKey`.
 
 ---
 
-## Lesson 5 — The platoon leader lives in a DIFFERENT group than the doctrinal Command Element: group-level identity cannot answer "who commands the platoon"
+## Lesson 5 â€” The platoon leader lives in a DIFFERENT group than the doctrinal Command Element: group-level identity cannot answer "who commands the platoon"
 
 **Date:** 2026-11-14
 **Module:** `Functions/Core/fn_registryInit.sqf` (platoon registry), `roleKey` semantics
@@ -323,7 +321,7 @@ The first hypothesis was "the player is detached from every group". The log disp
 - The platoon leader IS inside a group (`peerOnly=false`), but that group is **`Alpha 3-6`, NOT the doctrinal `HQ - 1st Platoon (Command Element)`**.
 - Root cause: in the composition the lieutenant is placed as a **standalone unit** (no `SQUAD_1_0_TEAM_x` editor group variable), so Arma 3 gives him an engine-generated group name (`Alpha 3-6`). `fn_parseEditorGroups` only links groups whose editor variable matches the doctrinal naming convention, so this group is **not** attached to the `SQD_1_0` element.
 - Consequently `units (group of the Command Element)` contains only the RTO and the other HQ personnel, and the highest doctrine rank inside it is legitimately `PLT_1_RADIO_OPERATOR`.
-- `roleKey` is therefore **correct by definition** ("highest doctrine role inside this group") but **cannot answer "who commands the platoon"** — that is a different question, asked at a different level.
+- `roleKey` is therefore **correct by definition** ("highest doctrine role inside this group") but **cannot answer "who commands the platoon"** â€” that is a different question, asked at a different level.
 
 **Why this does not break the current single-platoon build:**
 
@@ -337,22 +335,22 @@ The first hypothesis was "the player is detached from every group". The log disp
 **The fix (applied):**
 
 - Three new fields on the PLATOON entry (`FTCS_Platoons_Registry > pltId`), seeded by `fn_registryInit`:
-  - `"leaderUnit"` — the `PLT_<N>_LEADER` unit (player or AI). Valid regardless of which group he belongs to. Falls back to the `PLT_<N>_LEADER` missionNamespace variable.
-  - `"leaderGroup"` — `group leaderUnit`, or `grpNull` when he has no group at all.
-  - `"peerOnly"` — `true` ONLY when `leaderUnit` is not inside `leaderGroup` (truly groupless). It does NOT mark "leader is in a non-doctrinal group": check `leaderGroup` against the platoon's `platoonGroup` for that.
+  - `"leaderUnit"` â€” the `PLT_<N>_LEADER` unit (player or AI). Valid regardless of which group he belongs to. Falls back to the `PLT_<N>_LEADER` missionNamespace variable.
+  - `"leaderGroup"` â€” `group leaderUnit`, or `grpNull` when he has no group at all.
+  - `"peerOnly"` â€” `true` ONLY when `leaderUnit` is not inside `leaderGroup` (truly groupless). It does NOT mark "leader is in a non-doctrinal group": check `leaderGroup` against the platoon's `platoonGroup` for that.
 - A `[FTCS][REGISTRY] plt N leaderVar=... leaderGroup=... peerOnly=...` log line makes the whole state visible at seed time.
 
 **Rules derived (IMPORTANT for every future consumer):**
 
-1. **"Who commands the platoon?"** → read the PLATOON entry (`leaderUnit` / `leaderGroup` / `peerOnly`). Never `roleKey`, never `leader _group`.
-2. **"Which doctrine role lives in this group?"** → `roleKey` (group entry). Useful for squads/teams, NOT for the HQ command element in player mode.
+1. **"Who commands the platoon?"** â†’ read the PLATOON entry (`leaderUnit` / `leaderGroup` / `peerOnly`). Never `roleKey`, never `leader _group`.
+2. **"Which doctrine role lives in this group?"** â†’ `roleKey` (group entry). Useful for squads/teams, NOT for the HQ command element in player mode.
 3. **While `peerOnly == true`** consumers must keep using `isPlayer _leader` / `FTCS_Platoon_Leader_Unit` (today's working behaviour). `roleKey == "PLT_<N>_LEADER"` will also be true then, but the registry field is the stable source.
 3b. `peerOnly == false` does NOT mean "the leader is in the doctrinal Command Element". Always compare `leaderGroup` with `platoonGroup` when the distinction matters.
 4. Group-level identity and platoon-level identity are **different levels of the same model**. Mixing them is exactly how the HQ ended up reporting its RTO as commander.
 
 ---
 
-## Lesson 6 — Phase 2 pattern: registry is the source of truth, the doctrine tree keeps a MIRROR until consumers are migrated
+## Lesson 6 â€” Phase 2 pattern: registry is the source of truth, the doctrine tree keeps a MIRROR until consumers are migrated
 
 **Date:** 2026-11-14
 **Module:** `Functions/Core/fn_registryInit.sqf` (`FTCS_Platoons_Registry`, `FTCS_fnc_registrySetPlatoon` / `registryGetPlatoon`)
@@ -370,19 +368,19 @@ Platoon STATE that used to live only in `FTCS_Company_Data > platoons > PLT_x` i
 3. **Write through with the accessor.** New/edited writers must call:
    `[pltId, "movementTechnique", _v] call FTCS_fnc_registrySetPlatoon;`
    It writes the registry first and then mirrors into `FTCS_Company_Data` so consumers still reading the tree observe the same value.
-4. **Read through the accessor.** New readers use `[pltId, "field", _default] call FTCS_fnc_registryGetPlatoon;` — registry first, doctrine fallback (safety net for fields not yet seeded).
+4. **Read through the accessor.** New readers use `[pltId, "field", _default] call FTCS_fnc_registryGetPlatoon;` â€” registry first, doctrine fallback (safety net for fields not yet seeded).
 5. **Never write the tree directly** for these fields from now on. The mirror exists only so Phase 3 can be done consumer-by-consumer with zero-downtime ordering.
 
 **Architecture invariants an AI must NOT break:**
 
 - `FTCS_Platoons_Registry` is keyed by the NUMERIC platoon id (1, 2, 3...), same key as HALT/REJOIN uses. Never mix STRING keys (`"PLT_1"`) into it.
 - The doctrine mirror is TEMPORARY. When Phase 3 completes, `FTCS_fnc_registrySetPlatoon` must lose its mirror block and `registryGetPlatoon` its fallback (one edit, clearly marked `---- Doctrine mirror (temporary, removed in Phase 3)`).
-- Any new platoon-level state field must be added to BOTH: this document (`FTCS_Data_Structure_Reference.md` §1) and the `[FTCS][REGISTRY] plt N state:` diagnostic line, so seeding problems are visible from the log.
-- `roleKey` (group level) and the platoon `leaderUnit`/`leaderGroup`/`peerOnly` triple (platoon level) answer DIFFERENT questions — see Lessons 4 and 5.
+- Any new platoon-level state field must be added to BOTH: this document (`FTCS_Data_Structure_Reference.md` Â§1) and the `[FTCS][REGISTRY] plt N state:` diagnostic line, so seeding problems are visible from the log.
+- `roleKey` (group level) and the platoon `leaderUnit`/`leaderGroup`/`peerOnly` triple (platoon level) answer DIFFERENT questions â€” see Lessons 4 and 5.
 
 ---
 
-## Lesson 7 — `!expr isEqualTo value` parses as `(!expr) isEqualTo value` → "Error !: Type String, expected Bool"
+## Lesson 7 â€” `!expr isEqualTo value` parses as `(!expr) isEqualTo value` â†’ "Error !: Type String, expected Bool"
 
 **Date:** 2026-11-14
 **Module:** `Functions/Movement/fn_movementBoundTeams.sqf` (Phase 3 rewrite)
@@ -414,11 +412,11 @@ if (!(_anchorSquad isEqualTo _sqdKey)) then { _anchorRef = _squadRef; };
 1. `!A isEqualTo B` is ALWAYS a bug in SQF. Write `!(A isEqualTo B)`.
 2. The same trap exists with `!=`: `A != B` is a numeric comparison and coerces; prefer `!(A isEqualTo B)` for strings, hashmaps and objects.
 3. Guard against it structurally: when a negated comparison sits on a value read with `getOrDefault`, materialise the value into a `private` first (as above). It reads better and removes the ambiguity entirely.
-4. A syntax-only checker (`verify_syntax.ps1` balances braces/brackets/parens) CANNOT catch this: the file is syntactically valid, it fails at RUNTIME on the first evaluation. Only an in-game self-test or the RPT reveals it — which is why every migration step needs a runtime self-test that executes the new code paths.
+4. A syntax-only checker (`verify_syntax.ps1` balances braces/brackets/parens) CANNOT catch this: the file is syntactically valid, it fails at RUNTIME on the first evaluation. Only an in-game self-test or the RPT reveals it â€” which is why every migration step needs a runtime self-test that executes the new code paths.
 
 ---
 
-## Lesson 8 — Doctrine is a SEED, not a contract: separate the immutable template from the live state
+## Lesson 8 â€” Doctrine is a SEED, not a contract: separate the immutable template from the live state
 
 **Date:** 2026-11-14
 **Module:** `Functions/Core/fn_applyDoctrine.sqf`, `Functions/Formations/fn_formationsApplyPlatoonOrder.sqf`
@@ -428,8 +426,8 @@ if (!(_anchorSquad isEqualTo _sqdKey)) then { _anchorRef = _squadRef; };
 
 Platoon formation slots come from the doctrine composition (`platoonFormationSlots` in the active doctrine data). Two very different things were being conflated:
 
-1. **What the doctrine says the platoon SHOULD look like** — the slot -> squad mapping authored in 3DEN.
-2. **What the platoon ACTUALLY looks like right now** — the same mapping after scouts detached, after a squad was wiped, or (future) after the player re-ordered squads.
+1. **What the doctrine says the platoon SHOULD look like** â€” the slot -> squad mapping authored in 3DEN.
+2. **What the platoon ACTUALLY looks like right now** â€” the same mapping after scouts detached, after a squad was wiped, or (future) after the player re-ordered squads.
 
 Reading (1) at runtime makes (2) impossible: every runtime mutation would have to rewrite the doctrine, which must never happen.
 
@@ -441,7 +439,7 @@ Reading (1) at runtime makes (2) impossible: every runtime mutation would have t
 | `formationSlots` | `FTCS_Platoons_Registry > pltId` | `fn_registryInit` (seed) + runtime writers (`fn_applyCommandToTarget` scouts, future re-order) | **Live / mutable** | What consumers read. |
 
 - Both are **copied** (`+_hash`), never referenced, so mutating the live map can never leak into the template.
-- `fn_formationsApplyPlatoonOrder` falls back to `doctrineFormationSlots` when the live map is empty (e.g. after a scout sweep) — still a registry read, never the doctrine tree.
+- `fn_formationsApplyPlatoonOrder` falls back to `doctrineFormationSlots` when the live map is empty (e.g. after a scout sweep) â€” still a registry read, never the doctrine tree.
 - **No runtime function reads `activeDoctrineData` any more.** Verified by grep across `Functions/`.
 
 **Why the doctrine tree still exists (do NOT delete it):**
@@ -464,13 +462,13 @@ It is the **blueprint**, not the building. `FTCS_Company_Data` answers *"what wa
 **Invariants an AI must not break:**
 
 - Never write `doctrineFormationSlots` outside `fn_applyDoctrine`.
-- Never make a runtime consumer read `doctrineFormationSlots` as the CURRENT layout — it is the template.
+- Never make a runtime consumer read `doctrineFormationSlots` as the CURRENT layout â€” it is the template.
 - Never mutate the doctrine tree in runtime; if a value must change during the mission, it belongs in the registry.
 - When adding a new doctrine-derived field, seed BOTH: the template (immutable) and the live value (mutable), and document both here.
 
 ---
 
-## Lesson 9 — Migrating a consumer: REMOVE every use of the old variable, or it becomes an undefined reference
+## Lesson 9 â€” Migrating a consumer: REMOVE every use of the old variable, or it becomes an undefined reference
 
 **Date:** 2026-11-14
 **Module:** `Functions/Interactions/fn_applyCommandToTarget.sqf` (scout detachment)
@@ -504,7 +502,7 @@ but **downstream code still used `_targetSquadData`**:
 private _tacticalTeams = _targetSquadData getOrDefault ["tacticalTeams", createHashMap];
 ```
 
-`_targetSquadData` no longer existed, so `_tacticalTeams` silently became an **empty HashMap** (SQF does not error on an undefined variable inside `getOrDefault`, it just yields the default). The team list was empty → no scout team found → the warning. The same stale variable existed in a second block (trail march scout reset).
+`_targetSquadData` no longer existed, so `_tacticalTeams` silently became an **empty HashMap** (SQF does not error on an undefined variable inside `getOrDefault`, it just yields the default). The team list was empty â†’ no scout team found â†’ the warning. The same stale variable existed in a second block (trail march scout reset).
 
 **Why the syntax checker did not catch it.** The file was perfectly balanced; an undefined LOCAL variable is a runtime concern, not a syntax one.
 
@@ -518,13 +516,13 @@ Both scout blocks now resolve the squad from the registry:
 **Rules derived.**
 
 1. When migrating a block, **grep the whole function for the removed variable name immediately after the edit** (`_targetSquadData|_tacticalTeams|_teamKeys`). Do it before running, not after the bug report.
-2. `getOrDefault` on an undefined variable **fails silently** — it hides the mistake. Prefer materialising shared lookups (squad groups, team lists) in ONE place and passing them down.
+2. `getOrDefault` on an undefined variable **fails silently** â€” it hides the mistake. Prefer materialising shared lookups (squad groups, team lists) in ONE place and passing them down.
 3. Any list where element 0 must be the Squad Leader must be built as **anchor first, then teams**, never from an unordered HashMap iteration.
 4. `isNotEqualTo` does not exist in SQF (see Lesson 7): write `!(A isEqualTo B)`.
 
 ---
 
-## Lesson 10 — Recalling a detached scout must restore its FULL squad state, not just the attachment
+## Lesson 10 â€” Recalling a detached scout must restore its FULL squad state, not just the attachment
 
 **Date:** 2026-11-14
 **Module:** `Functions/Interactions/fn_applyCommandToTarget.sqf` (scout recall), `Functions/Formations/fn_platoonHaltRejoin.sqf` (fireteam self-heal)
@@ -532,10 +530,10 @@ Both scout blocks now resolve the squad from the registry:
 
 **Symptom (in game, reproducible sequence):**
 
-1. Detach a scout to slot 11 → OK.
-2. HALT → move → REJOIN → the scout returns to its scout slot → OK.
-3. **Recall the scout** (`PLT_SCOUT_REJOIN_ALL` / "Rejoin all scouts") → it goes back into its squad → OK.
-4. Move a little → HALT → move → REJOIN → **the recalled scout jumps in FRONT of the platoon leader** instead of following its squad.
+1. Detach a scout to slot 11 â†’ OK.
+2. HALT â†’ move â†’ REJOIN â†’ the scout returns to its scout slot â†’ OK.
+3. **Recall the scout** (`PLT_SCOUT_REJOIN_ALL` / "Rejoin all scouts") â†’ it goes back into its squad â†’ OK.
+4. Move a little â†’ HALT â†’ move â†’ REJOIN â†’ **the recalled scout jumps in FRONT of the platoon leader** instead of following its squad.
 
 **Verified root cause.**
 
@@ -553,10 +551,10 @@ With a stale `allocationSlot` and a null parent, the next HALT/REJOIN falls into
 **The fix (applied).**
 
 1. **Recall (`PLT_SCOUT_REJOIN_ALL` and the per-squad trail recall)** now performs a **full state reset** on every recalled team:
-   - `movingMode` → follow mode
-   - `teamAttachment` → `"SQUAD_BOUND"`
-   - `allocationSlot` → `-1`
-   - `parentSquadGroup` → the squad anchor (self-reference for the anchor, its own anchor for fireteams)
+   - `movingMode` â†’ follow mode
+   - `teamAttachment` â†’ `"SQUAD_BOUND"`
+   - `allocationSlot` â†’ `-1`
+   - `parentSquadGroup` â†’ the squad anchor (self-reference for the anchor, its own anchor for fireteams)
    The anchor is resolved from `squadId` + `isSquadLeaderGroup`, never from names.
 2. **`fn_platoonHaltRejoin` self-heals**: if a fireteam reaches the REJOIN with a null `parentSquadGroup` but a valid `squadId`, it rebuilds the link from the registry before deciding how to re-anchor, and logs `anchor self-healed`.
 
@@ -565,11 +563,11 @@ With a stale `allocationSlot` and a null parent, the next HALT/REJOIN falls into
 1. A lifecycle transition must reset **every** field that describes the OLD state. "Detached" is not one flag: it is a combination (`movingMode` + `teamAttachment` + `allocationSlot` + `parentSquadGroup`). Reset them together, in one place.
 2. Any consumer that branches on `allocationSlot in [5,6,7,8,11,12]` will misfire while a stale slot lingers. Clearing it is part of leaving the detached state.
 3. Defensive self-healing at the consumer (`squadId` -> anchor) is cheap and makes the system recover from lost links instead of silently anchoring to the wrong leader.
-4. Test the FULL cycle, not a single transition: detach → HALT/REJOIN → recall → move → HALT/REJOIN. The bug only appears on the second REJOIN.
+4. Test the FULL cycle, not a single transition: detach â†’ HALT/REJOIN â†’ recall â†’ move â†’ HALT/REJOIN. The bug only appears on the second REJOIN.
 
 ---
 
-## Lesson 11 — "Pick the first matching group" is a bug: doctrine must DECLARE the scout team (`tacticalRole = "SCOUT"`)
+## Lesson 11 â€” "Pick the first matching group" is a bug: doctrine must DECLARE the scout team (`tacticalRole = "SCOUT"`)
 
 **Date:** 2026-11-14
 **Module:** `Doctrines/Data/*.sqf`, `Functions/Core/fn_registryInit.sqf`, `Functions/Interactions/fn_applyCommandToTarget.sqf`
@@ -577,7 +575,7 @@ With a stale `allocationSlot` and a null parent, the next HALT/REJOIN falls into
 
 **Symptom (in game).**
 
-Detach a scout → OK. Recall it → OK. Detach **again** → a **different fireteam** gets sent to the scout slot.
+Detach a scout â†’ OK. Recall it â†’ OK. Detach **again** â†’ a **different fireteam** gets sent to the scout slot.
 
 **Verified root cause.**
 
@@ -595,7 +593,7 @@ with
 _scoutGroup = (_squadFireteams select 0) select 1;   // HashMap order = NOT stable
 ```
 
-`FTCS_Groups_Registry_Table` is a HashMap, so `select 0` returned a different fireteam on different runs. The doctrine *did* name the team (`"Scout Team"` in `teamStructure`), but that name is a DISPLAY name and Point 18 forbids using it as an identifier — and `teamRoles` only had `ASSAULT`/`SUPPORT`, so the information was not machine-readable.
+`FTCS_Groups_Registry_Table` is a HashMap, so `select 0` returned a different fireteam on different runs. The doctrine *did* name the team (`"Scout Team"` in `teamStructure`), but that name is a DISPLAY name and Point 18 forbids using it as an identifier â€” and `teamRoles` only had `ASSAULT`/`SUPPORT`, so the information was not machine-readable.
 
 **The fix (applied, option 1).**
 
@@ -620,7 +618,7 @@ _scoutGroup = (_squadFireteams select 0) select 1;   // HashMap order = NOT stab
 
 ---
 
-## Lesson 12 — `parsedSquads` is built AFTER the doctrine: a field stamped in `fn_applyDoctrine` never reaches the runtime team objects
+## Lesson 12 â€” `parsedSquads` is built AFTER the doctrine: a field stamped in `fn_applyDoctrine` never reaches the runtime team objects
 
 **Date:** 2026-11-14
 **Module:** `fn_applyDoctrine.sqf`, `fn_parseEditorGroups.sqf`, `fn_registryInit.sqf`
@@ -628,28 +626,28 @@ _scoutGroup = (_squadFireteams select 0) select 1;   // HashMap order = NOT stab
 
 **Symptom.** After adding `["teamRoles", ["ASSAULT","SCOUT","ASSAULT","SUPPORT"]]` to the doctrine and projecting `"tacticalRole"` in `fn_registryInit`, the scout detachment STILL reported "no separate scout fireteam".
 
-**Verified root cause — the pipeline order matters:**
+**Verified root cause â€” the pipeline order matters:**
 
 ```
-fn_applyDoctrine      → builds FTCS_Company_Data > platoons > PLT_x > squads
+fn_applyDoctrine      â†’ builds FTCS_Company_Data > platoons > PLT_x > squads
                         (+ doctrine template teams with "tacticalRole")
-fn_parseEditorGroups   → CREATES "parsedSquads" FROM SCRATCH, one entry per
+fn_parseEditorGroups   â†’ CREATES "parsedSquads" FROM SCRATCH, one entry per
                         editor group, each team hash built as a NEW HashMap
                         WITHOUT "tacticalRole"
-fn_registryInit        → reads parsedSquads > team > "tacticalRole"   ← EMPTY
+fn_registryInit        â†’ reads parsedSquads > team > "tacticalRole"   â† EMPTY
 ```
 
 1. `fn_applyDoctrine` **never creates `parsedSquads`** (grep: 0 hits). It only creates `squads` and `squadsRegistry`.
 2. `fn_parseEditorGroups` builds `parsedSquads` later and **overwrites** every team hash, so any field the doctrine put there is lost.
-3. Therefore every attempt to read `"tacticalRole"` from `parsedSquads` returns `""`, and the selector falls back — or, before the fallback existed, found nothing at all.
+3. Therefore every attempt to read `"tacticalRole"` from `parsedSquads` returns `""`, and the selector falls back â€” or, before the fallback existed, found nothing at all.
 
 **The fix (applied).**
 
-- `fn_applyDoctrine` now stores the resolved doctrine roles as a plain INDEX → ROLE array:
+- `fn_applyDoctrine` now stores the resolved doctrine roles as a plain INDEX â†’ ROLE array:
   `FTCS_Company_Data set ["doctrineTeamRoles", _teamRoles];`
   (an array, not a name lookup: `["ASSAULT","SCOUT","ASSAULT","SUPPORT"]`).
 - `fn_registryInit` resolves each team's role by its **ordinal in the `TEAM_<N>` type**:
-  `parseNumber ((_teamType splitString "_") select 1)` → `doctrineTeamRoles select (_ordinal - 1)`.
+  `parseNumber ((_teamType splitString "_") select 1)` â†’ `doctrineTeamRoles select (_ordinal - 1)`.
   No display names, no HashMap iteration order (Point 18 compliant).
 - `fn_parseEditorGroups` keeps writing `"tacticalRole", ""` with a comment explaining that the role is resolved later, so the field exists in the team hash but is never mistaken for the source of truth.
 
@@ -657,21 +655,21 @@ fn_registryInit        → reads parsedSquads > team > "tacticalRole"   ← EMPT
 
 1. **Check the pipeline order before adding a field.** `parsedSquads` is a RUNTIME structure built by the parser; the doctrine template lives in `squads`. A value written to one is not visible in the other.
 2. When two functions build overlapping structures, the LAST writer wins. Add the field where the *last* writer can compute it, or pass it through a parallel, stable structure (here: an index array on `FTCS_Company_Data`).
-3. Index-based projection (`teamRoles[i]` ↔ `TEAM_(i+1)`) is deterministic and name-free — prefer it over matching team display names.
+3. Index-based projection (`teamRoles[i]` â†” `TEAM_(i+1)`) is deterministic and name-free â€” prefer it over matching team display names.
 4. Always log the raw source (`doctrineTeamRoles=...`) in the self-test: it distinguishes "the doctrine has no SCOUT" from "the projection lost it".
 
 ---
 
-## PENDING-1 — Company scale: each AI platoon needs its own follow loop and formation management
+## PENDING-1 â€” Company scale: each AI platoon needs its own follow loop and formation management
 
 **Date:** 2026-11-14
-**Status:** OPEN — decision required BEFORE writing any new company-scale feature.
+**Status:** OPEN â€” decision required BEFORE writing any new company-scale feature.
 **Type:** Architecture / Design Note (direct guide for an AI)
 **Scope:** every movement / formation / order function.
 
 **The open question.**
 
-Migration phases 1–8 put `"platoonId"` on every group entry and `leaderUnit` / `leaderGroup` / `peerOnly` / `squads` on every platoon entry, so the data for multiple platoons already EXISTS. **No consumer uses it per platoon yet.** Almost everything still resolves the platoon with:
+Migration phases 1â€“8 put `"platoonId"` on every group entry and `leaderUnit` / `leaderGroup` / `peerOnly` / `squads` on every platoon entry, so the data for multiple platoons already EXISTS. **No consumer uses it per platoon yet.** Almost everything still resolves the platoon with:
 
 ```sqf
 private _pltId = missionNamespace getVariable ["FTCS_Player_Platoon_ID", 1];
@@ -681,9 +679,9 @@ private _pltId = missionNamespace getVariable ["FTCS_Player_Platoon_ID", 1];
 
 1. Does EVERY AI platoon run its own `fn_formationsGroupDoFollowCommander` threads and its own `fn_formationsApplyPlatoonOrder` pipeline? (Yes is the natural answer: the loops are already per-group, only the reference leader and the axis are global.)
 2. Do the platoon-scoped globals become per-platoon entries in `FTCS_Platoons_Registry`?
-   - `FTCS_Platoon_Follow_Mode` → `registrySetPlatoon [pltId, "followMode", ...]`
-   - `FTCS_Platoon_Advance_Direction` / `FTCS_Platoon_Fixed_Abs_Dir` / `FTCS_Last_Commander_Dir` → per-platoon axis fields
-   - `FTCS_Platoon_Phase_<N>` (already per platoon) → plus registry mirror
+   - `FTCS_Platoon_Follow_Mode` â†’ `registrySetPlatoon [pltId, "followMode", ...]`
+   - `FTCS_Platoon_Advance_Direction` / `FTCS_Platoon_Fixed_Abs_Dir` / `FTCS_Last_Commander_Dir` â†’ per-platoon axis fields
+   - `FTCS_Platoon_Phase_<N>` (already per platoon) â†’ plus registry mirror
 3. What is the company-level anchor? The captain orders a platoon to a position; the platoon then runs its own local formation around its own lieutenant.
 
 **Hard rule for any new code written before this is decided:**
@@ -694,22 +692,22 @@ private _pltId = missionNamespace getVariable ["FTCS_Player_Platoon_ID", 1];
 
 ---
 
-## PENDING-2 — Long-cycle verification of the scout state machine (VERIFIED / CLOSED)
+## PENDING-2 â€” Long-cycle verification of the scout state machine (VERIFIED / CLOSED)
 
 **Date:** 2026-11-14
-**Status:** ✔ CLOSED — verified in game. The scout state machine is correct over the full lifecycle.
+**Status:** âœ” CLOSED â€” verified in game. The scout state machine is correct over the full lifecycle.
 **Type:** Verification checklist (kept as a regression baseline)
 
 **What was verified:** a single scout deployment works, the scout menu finds the correct team (Lesson 12 fix), AND the full long-cycle below was exercised successfully in game.
 
 **Lifecycle checks (all PASSED in game):**
 
-1. **Three consecutive deploy cycles** → the SAME team detached each time (Lesson 11 non-determinism regression).
-2. **HALT → move → REJOIN after a recall** → the recalled team rejoins its OWN squad, never in front of the lieutenant (Lesson 10 regression).
-3. **Road march with detached scouts** → column forms correctly, scouts re-chain.
-4. **Trail march with detached scouts** → trail chain forms correctly.
-5. **Recall (`PLT_SCOUT_REJOIN_ALL`) then HALT/REJOIN** → full state reset holds (`allocationSlot = -1`, `parentSquadGroup` intact).
-6. **Mixed case:** squad A with scouts detached + squad B without → only A's scout slots affected.
+1. **Three consecutive deploy cycles** â†’ the SAME team detached each time (Lesson 11 non-determinism regression).
+2. **HALT â†’ move â†’ REJOIN after a recall** â†’ the recalled team rejoins its OWN squad, never in front of the lieutenant (Lesson 10 regression).
+3. **Road march with detached scouts** â†’ column forms correctly, scouts re-chain.
+4. **Trail march with detached scouts** â†’ trail chain forms correctly.
+5. **Recall (`PLT_SCOUT_REJOIN_ALL`) then HALT/REJOIN** â†’ full state reset holds (`allocationSlot = -1`, `parentSquadGroup` intact).
+6. **Mixed case:** squad A with scouts detached + squad B without â†’ only A's scout slots affected.
 
 **Keep this list as a REGRESSION BASELINE:** re-run it after any future change to
 `fn_applyCommandToTarget` (scout branch), `fn_platoonHaltRejoin`, `fn_registryInit`
@@ -719,15 +717,15 @@ private _pltId = missionNamespace getVariable ["FTCS_Player_Platoon_ID", 1];
 
 - `[FTCS][SELFTEST] SCOUT ... scoutRole=... -> PASS` in every combat squad
 - `[FTCS][REJOIN] <grp> anchor self-healed from squadId ...` (means the parent was lost and recovered)
-- `[FTCS][REJOIN] <grp> (fireteam) SKIPPED: no parentSquadGroup anchor ...` (means the self-heal failed — this is a BUG, not a valid state).
+- `[FTCS][REJOIN] <grp> (fireteam) SKIPPED: no parentSquadGroup anchor ...` (means the self-heal failed â€” this is a BUG, not a valid state).
 
 ---
 
-## SESSION LOG 2026-11-14 — HALT/REJOIN fix + full RULE 16 migration
+## SESSION LOG 2026-11-14 â€” HALT/REJOIN fix + full RULE 16 migration
 
 **Status:** CLOSED. All work below is applied, verified in game and documented.
 **Purpose:** resume context for the next session WITHOUT re-reading the whole chat.
-**Read this first. Then read Lessons 1–12.**
+**Read this first. Then read Lessons 1â€“12.**
 
 ### 1. Why this session started
 
@@ -764,9 +762,9 @@ The doctrine tree remains as: seed, UI captions, and the reset template.
 - `continue` is illegal inside `forEach` (Lesson 1).
 - Never derive hierarchy from HashMap order (Lesson 3).
 - `leader _group` is NOT the doctrine commander (Lesson 4/5).
-- `!A isEqualTo B` is a syntax-and-runtime trap → `!(A isEqualTo B)` (Lesson 7).
+- `!A isEqualTo B` is a syntax-and-runtime trap â†’ `!(A isEqualTo B)` (Lesson 7).
 - Doctrine is a SEED, not a contract; mutations go to the registry (Lesson 8).
-- Migrating code: grep the removed variable — `getOrDefault` on an undefined var fails SILENTLY (Lesson 9).
+- Migrating code: grep the removed variable â€” `getOrDefault` on an undefined var fails SILENTLY (Lesson 9).
 - Recalling a detached group must reset its FULL state (Lesson 10).
 - "Pick the first matching group" is a bug; declare the role in doctrine (Lesson 11).
 - `parsedSquads` is built AFTER `fn_applyDoctrine` (Lesson 12).
@@ -777,11 +775,11 @@ Search the RPT for `[FTCS][SELFTEST]`:
 `PHASE 2..7 ACCEPTANCE`, `SCOUT ROLE ACCEPTANCE`. Every check prints PASS/FAIL/SKIP.
 These are the fastest way to confirm the registry seeded correctly in a new mission.
 
-### 6. OPEN ITEM — read PENDING-1 before any new feature
+### 6. OPEN ITEM â€” read PENDING-1 before any new feature
 
 **PENDING-1**: company scale. Each AI platoon needs its own follow loop and
 formation management. The registry data already exists (`platoonId`,
-`leaderUnit`, per-platoon state), but NO consumer uses it per platoon yet —
+`leaderUnit`, per-platoon state), but NO consumer uses it per platoon yet â€”
 everything still resolves `FTCS_Player_Platoon_ID`. Rule for new code: accept
 the platoon id as a parameter whenever available.
 
@@ -795,13 +793,13 @@ company mode.
 
 ---
 
-## Lesson 13 — Diagnostics go behind a sentinel; only real failures log always. Plus: `surfaceIsWater` is TRUE on a bridge deck
+## Lesson 13 â€” Diagnostics go behind a sentinel; only real failures log always. Plus: `surfaceIsWater` is TRUE on a bridge deck
 
 **Date:** 2026-11-14
 **Module:** project-wide (Rule 19 of the design notes), `fn_trailAdvanceAnchor.sqf`, `fn_formationsGroupFollowTrail.sqf`
 **Type:** Lesson + Architecture note
 
-### Part A — Debug Sentinel Policy (now Rule 19 in the design notes)
+### Part A â€” Debug Sentinel Policy (now Rule 19 in the design notes)
 
 **Problem.** During the bridge investigation the RPT was flooded with per-frame and per-tick traces (`[TGT-MARKER] Drawing marker ...`, `[ROAD][FOLLOW] ...` every 5 s per group). The single line that mattered was buried among thousands.
 
@@ -819,7 +817,7 @@ Boot traces (`init.sqf`, `fn_executeDeployment`, `fn_loadDoctrineData`, `fn_spaw
 
 **Rule of thumb:** if the trace would be read while debugging a normal (working) system, it is DEBUG/TRACE. If it can only mean "something is wrong", it is ALWAYS.
 
-### Part B — `surfaceIsWater` reports the TERRAIN cell, not what stands on it
+### Part B â€” `surfaceIsWater` reports the TERRAIN cell, not what stands on it
 
 **Symptom.** In trail march, followers piled up at both ends of a bridge. Traces showed:
 
@@ -828,11 +826,11 @@ Boot traces (`init.sqf`, `fn_executeDeployment`, `fn_loadDoctrineData`, `fn_spaw
 [FTCS][TRAIL][FOLLOW] *** 'Mortar Section' trail slot is ON WATER - AI cannot path there (bridge gap).
 ```
 
-Yet the player confirms he walked **on the bridge deck**, never into the water, and the trail points rise from Z≈3.6 to Z≈12 across the crossing.
+Yet the player confirms he walked **on the bridge deck**, never into the water, and the trail points rise from Zâ‰ˆ3.6 to Zâ‰ˆ12 across the crossing.
 
 **Verified cause.** `surfaceIsWater` samples the water cell of the **terrain** below the position. A bridge deck is an object placed ABOVE the water cell, so `surfaceIsWater` returns **`true`** for a unit standing on the bridge. Using it alone to reject "unwalkable" trail points therefore rejects every bridge crossing.
 
-**Correct test — height-aware:**
+**Correct test â€” height-aware:**
 
 ```sqf
 // "really in the water" = surface is water AND the unit is at water level.
@@ -850,7 +848,7 @@ private _onWater = surfaceIsWater _pos
 
 ---
 
-## Lesson 14 — `nil` inside an array COLLAPSES the array (and deleting a registry key leaves a stale read)
+## Lesson 14 â€” `nil` inside an array COLLAPSES the array (and deleting a registry key leaves a stale read)
 
 **Date:** 2026-11-14
 **Module:** `Functions/Movement/fn_formationsTrailQueueSync.sqf`, `fn_formationsGroupFollowTrail.sqf`
@@ -875,7 +873,7 @@ _entries pushBack [_x, _off, _pos];
 Arma **collapses `nil` inside an array literal**: `[a, b, nil]` becomes `[a, b]`.
 The entry therefore had TWO elements whenever the group had no previous slot, and the
 later `select 2` failed. This is the same engine rule already documented inside
-`fn_registryInit.sqf` (the `FTCS_fnc_registrySet` comment about the 2-argument form) —
+`fn_registryInit.sqf` (the `FTCS_fnc_registrySet` comment about the 2-argument form) â€”
 it was simply not applied to this new code.
 
 **Second, silent bug in the same design.** `FTCS_fnc_registrySet` treats `nil` as
@@ -902,7 +900,7 @@ tick's value in place, so a consumer could read a stale slot.
 **Rules derived.**
 
 1. **Never let `nil` reach an array literal.** Use `[]`, `grpNull`, `objNull`, `-1` or a
-   sentinel — whatever keeps the element count stable. A collapsed array is invisible
+   sentinel â€” whatever keeps the element count stable. A collapsed array is invisible
    until a `select` on a later index blows up far from the cause.
 2. **Never use `nil` as a registry value when the key must survive.** The setter deletes
    on `nil`; the reader then returns the value written in a previous tick, which looks
@@ -915,7 +913,7 @@ tick's value in place, so a consumer could read a stale slot.
 
 ---
 
-## Lesson 15 — Trail column crossing a CUT (bridge / gap / clearance): the record freeze IS the barrier, and the queue must chain by DOCTRINAL gap
+## Lesson 15 â€” Trail column crossing a CUT (bridge / gap / clearance): the record freeze IS the barrier, and the queue must chain by DOCTRINAL gap
 
 **Date:** 2026-11-15
 **Module:** `Functions/Movement/fn_formationsTrailQueueSync.sqf`, `Functions/Roads/fn_trailAdvanceAnchor.sqf`, `Functions/Formations/fn_formationsGroupFollowTrail.sqf`
@@ -1032,7 +1030,7 @@ behind is still dragged onto `maxIdx`. The gate must be PER CAR.
 
 ---
 
-## Lesson 16 — `private _x = <nil>` does NOT create the variable: `isEqualType` cannot guard a `nil`-returning getter
+## Lesson 16 â€” `private _x = <nil>` does NOT create the variable: `isEqualType` cannot guard a `nil`-returning getter
 
 **Date:** 2026-11-15
 **Module:** `Functions/Formations/fn_formationsGroupFollowTrail.sqf`, `Functions/Core/fn_registryInit.sqf` (`FTCS_fnc_registryGet`)
@@ -1066,7 +1064,7 @@ private _inQueueEarly = (_queueFlagEarly isEqualType true);   // Undefined varia
 ```
 
 Assigning `nil` leaves the variable **undeclared**. Any guard placed on the next
-line — including `isEqualType`, which is the usual idiom — never runs, because the
+line â€” including `isEqualType`, which is the usual idiom â€” never runs, because the
 read of the variable itself is what fails. The error is deterministic: the trail
 queue thread starts AFTER the follow threads, so on the first tick the key does
 not exist yet.
@@ -1097,7 +1095,7 @@ Applied to `trailQueueHasSeat` (false), `trailQueueIndex` (-1) and
 
 ---
 
-## Lesson 17 — `allocationSlot` ascending is NOT the column order: road and trail must walk the SAME explicit slot list
+## Lesson 17 â€” `allocationSlot` ascending is NOT the column order: road and trail must walk the SAME explicit slot list
 
 **Date:** 2026-11-15
 **Module:** `Functions/Formations/fn_trailColumnSet.sqf`, `Functions/Formations/fn_formationsRoadColumnSet.sqf`
@@ -1163,10 +1161,10 @@ tail, so nothing is dropped from the file.
 
 ---
 
-## PENDING-5 — `_slotOrder` is duplicated between the road and trail column functions
+## PENDING-5 â€” `_slotOrder` is duplicated between the road and trail column functions
 
 **Date:** 2026-11-15
-**Status:** OPEN — refactor, NOT a bug. Do it when the road column is next touched.
+**Status:** OPEN â€” refactor, NOT a bug. Do it when the road column is next touched.
 **Type:** Architecture / Design Note (direct guide for an AI)
 **Scope:** `Functions/Formations/fn_formationsRoadColumnSet.sqf`, `Functions/Formations/fn_trailColumnSet.sqf`
 
@@ -1183,13 +1181,13 @@ private _slotOrder = [9, 0, 4, 1, 2, 3, 10, 5];
 Both are correct today (Lesson 17), so there is no functional bug. The risk is
 **drift**: the day the march doctrine changes and only one of them is edited, the
 road and trail columns silently put different groups in the same position of the
-file — the exact class of bug that took a full session to diagnose.
+file â€” the exact class of bug that took a full session to diagnose.
 
 ### The planned fix
 
 1. New function `FTCS_fnc_columnSlotOrder` (module `Formations`) returning the list
    (and, optionally, accepting an "include scouts" flag for a future use case).
-2. Register it in `description.ext` under `CfgFunctions > Formations` — **this
+2. Register it in `description.ext` under `CfgFunctions > Formations` â€” **this
    requires leaving the mission, passing through 3DEN and re-entering**, because
    `description.ext` is not recompiled by an in-game restart.
 3. Replace both literals with `private _slotOrder = call FTCS_fnc_columnSlotOrder;`.
@@ -1204,7 +1202,7 @@ If either list is edited, **both must be edited in the same change**. Grep
 
 ---
 
-## Lesson 18 — A trail index must be measured FROM THE FRONT (`maxIdx - offset/step`), exactly like the road samples `headDist - offsetDist`
+## Lesson 18 â€” A trail index must be measured FROM THE FRONT (`maxIdx - offset/step`), exactly like the road samples `headDist - offsetDist`
 
 **Date:** 2026-11-15
 **Module:** `Functions/Movement/fn_formationsTrailQueueSync.sqf`, `Functions/Formations/fn_formationsGroupFollowTrail.sqf`
@@ -1262,7 +1260,7 @@ expression replaces both the "distance from origin" bug and the earlier
 
 ---
 
-## Lesson 19 — Waking a group for a march is ONE function (`fn_groupAwakenForMarch`), not an inline AI block in every loop
+## Lesson 19 â€” Waking a group for a march is ONE function (`fn_groupAwakenForMarch`), not an inline AI block in every loop
 
 **Date:** 2026-11-15
 **Module:** `Functions/Formations/fn_groupAwakenForMarch.sqf` (new), `fn_formationsApplyPlatoonOrder.sqf`, `fn_formationsGroupFollowRoad.sqf`, `fn_formationsGroupFollowTrail.sqf`, `fn_applyCommandToTarget.sqf` (x2), `fn_platoonSetOperationalPhase.sqf` (x3)
@@ -1327,7 +1325,7 @@ multiplied the violation.
    through 3DEN and re-entering: an in-game restart does not recompile CfgFunctions.
 ---
 
-## Lesson 20 — `trailPath` indexes are NOT a uniform 2 m grid: a bridge crossing records ONE point spanning ~100 m
+## Lesson 20 â€” `trailPath` indexes are NOT a uniform 2 m grid: a bridge crossing records ONE point spanning ~100 m
 
 **Date:** 2026-11-15
 **Module:** `Functions/Roads/fn_trailIndexAtArc.sqf` (new), `fn_formationsTrailQueueSync.sqf`, `fn_formationsGroupFollowTrail.sqf`
@@ -1409,7 +1407,7 @@ Callers updated:
 4. A "column half stuck after a bottleneck" symptom should immediately prompt
    checking `maxIdx` growth against `headDist` growth in the RPT.---
 
-## Lesson 21 — A chain that RE-SPACES the column destroys it: round to the NEAREST trail point, and let order be the only constraint
+## Lesson 21 â€” A chain that RE-SPACES the column destroys it: round to the NEAREST trail point, and let order be the only constraint
 
 **Date:** 2026-11-15
 **Module:** `Functions/Roads/fn_trailIndexAtArc.sqf`, `Functions/Movement/fn_formationsTrailQueueSync.sqf`
@@ -1475,7 +1473,7 @@ if (_frontIdx >= 0 && { _seat >= _frontIdx }) then { _seat = _frontIdx - 1; };
 ### Rules derived
 
 1. **A queue enforces order; it must never compute spacing.** Spacing comes from
-   the doctrine (`trailOffsetDist` → arc → index). If a chain step is needed, the
+   the doctrine (`trailOffsetDist` â†’ arc â†’ index). If a chain step is needed, the
    column was mis-spaced upstream - fix that, do not compress it here.
 2. **When snapping a distance to a discrete grid, round to the nearest**, unless the
    brand new value is unsafe (mid-crossing). Rounding in one direction accumulates
@@ -1485,7 +1483,7 @@ if (_frontIdx >= 0 && { _seat >= _frontIdx }) then { _seat = _frontIdx - 1; };
    spacing shows seat differences proportional to the offset differences.
 ---
 
-## Lesson 22 — A trail column must walk the trail POINT BY POINT (cursor), not jump to its seat
+## Lesson 22 â€” A trail column must walk the trail POINT BY POINT (cursor), not jump to its seat
 
 **Date:** 2026-11-15
 **Module:** `Functions/Formations/fn_formationsGroupFollowTrail.sqf`, `fn_trailColumnSet.sqf`
@@ -1550,7 +1548,7 @@ itself is the barrier.
   `trailPath` and `roadOffsetDist` the role of the seat. NOT started.
 ---
 
-## Lesson 23 — A 1-index lane stutters, and a doctrinal seat does not stop overtaking
+## Lesson 23 â€” A 1-index lane stutters, and a doctrinal seat does not stop overtaking
 
 **Date:** 2026-11-15
 **Module:** `Functions/Formations/fn_formationsGroupFollowTrail.sqf`, `Functions/Movement/fn_formationsTrailQueueSync.sqf`
@@ -1624,7 +1622,7 @@ of overtaking.
 
 ---
 
-## Lesson 24 — Two groups may never share the SAME `trailOffsetDist` (queue `_gapIdx` floor turns a tie into a forced 2 m step)
+## Lesson 24 â€” Two groups may never share the SAME `trailOffsetDist` (queue `_gapIdx` floor turns a tie into a forced 2 m step)
 
 **Date:** 2026-11-16
 **Module:** `Functions/Formations/fn_formationsTrailCompactColumn.sqf`, `Functions/Movement/fn_formationsTrailQueueSync.sqf`
@@ -1634,7 +1632,7 @@ of overtaking.
 
 `fn_formationsTrailCompactColumn` paired teams and gave BOTH members of a pair the
 SAME `trailOffsetDist` (the first member's), relying on `trailShoulderOffset`
-(`±0.75 m`) to place them abreast. In the queue that tie cannot survive:
+(`Â±0.75 m`) to place them abreast. In the queue that tie cannot survive:
 
 ```sqf
 // fn_formationsTrailQueueSync.sqf
@@ -1683,7 +1681,7 @@ clamp.
 
 ---
 
-## Lesson 25 — A stuck-group timeout must release to the SEAT, not to `target + 1`
+## Lesson 25 â€” A stuck-group timeout must release to the SEAT, not to `target + 1`
 
 **Date:** 2026-11-16
 **Module:** `Functions/Formations/fn_formationsGroupFollowTrail.sqf`
@@ -1729,276 +1727,8 @@ re-joins the column. The seat itself is never written by this loop.
 
 ---
 
-## Lesson 26 — A `missionNamespace` GLOBAL used as the receiver of `getOrDefault` throws "Undefined variable" ONE LINE LATER, and the whole function aborts (the menu never opens)
 
-**Date:** 2026-11-16
-**Module:** `Functions/Interactions/fn_openSubordinateMenu.sqf`
-**Type:** Lesson
-
-### Symptom (RPT `Arma3_x64_2026-11-16_12-32-27.rpt`)
-
-```
-12:58:01 Error in expression <1_%2", _pltIdD, _si];
-private _sDataD = _parsedSquadsD getOrDefault [_sqdKeyD, c>
-12:58:01   Error position: <_parsedSquadsD getOrDefault [_sqdKeyD, c>
-12:58:01   Error Undefined variable in expression: _parsedsquadsd
-File ...\functions\Interactions\fn_openSubordinateMenu.sqf..., line 280
-...
-12:58:01   Error Undefined variable in expression: _pltdatad
-File ...\fn_openSubordinateMenu.sqf..., line 272
-```
-
-In game: **the subordinate menu stopped opening at all**, so the Road March layout
-submenu (and therefore "Compact Column") became unreachable.
-
-### Verified root cause
-
-The hub rebuild read the company tree like this:
-
-```sqf
-private _platoonsMapD = FTCS_Company_Data getOrDefault ["platoons", createHashMap];
-```
-
-`FTCS_Company_Data` is a **`missionNamespace` global**, not an `FTCS_fnc_*`
-function and not a local. Used as the receiver of `getOrDefault` without
-`missionNamespace getVariable`, the parser raises
-
-```
-Error Undefined variable in expression: _pltdatad   (reported ONE LINE LATER)
-```
-
-because SQF reports the failure at the next assignment that consumes the chain
-(`_pltDataD`, then `_parsedSquadsD`, then `_sDataD` etc.). This is the same
-family as Lesson 16: the error names a DIFFERENT variable than the statement that
-actually failed, so the reported line is never the bug.
-
-### Why it removed the menu
-
-The broken block lives inside `if (!isNil "FTCS_MENU_RoadMarchLayout") then {...}`,
-which runs BEFORE the final `showCommandingMenu _menuName`. A runtime error that
-aborts the block leaves the script aborting before the menu is shown: the command
-menu never appears, and any row it contains (Compact Column) is unreachable no
-matter how correct its gating is.
-
-It is INTERMITTENT because the tree can be absent/half-built during the start-up
-window (menu opened from the self command net before the doctrine is applied).
-
-### Correct implementation (applied)
-
-```sqf
-private _companyTreeD = missionNamespace getVariable ["FTCS_Company_Data", createHashMap];
-if (!(_companyTreeD isEqualType createHashMap)) then { _companyTreeD = createHashMap; };
-private _platoonsMapD = _companyTreeD getOrDefault ["platoons", createHashMap];
-if (!(_platoonsMapD isEqualType createHashMap)) then { _platoonsMapD = createHashMap; };
-private _pltDataD = _platoonsMapD getOrDefault [_pltKeyD, createHashMap];
-if (!(_pltDataD isEqualType createHashMap)) then { _pltDataD = createHashMap; };
-private _parsedSquadsD = _pltDataD getOrDefault ["parsedSquads", createHashMap];
-if (!(_parsedSquadsD isEqualType createHashMap)) then { _parsedSquadsD = createHashMap; };
-```
-
-The doctrine tree is consulted ONLY for the display caption (Point 18), and the
-row gating still comes from the registry (`_hasSquadD`, `squadTarget`), so a
-missing tree degrades the LABELS ("Squad 1..4") and never enables a wrong order.
-
-### Rules derived
-
-1. A `missionNamespace` global is READ through `missionNamespace getVariable [...]`,
-   every time, including as the receiver of a fluent `getOrDefault` chain.
-   `FTCS_Company_Data ... , FTCS_Groups_Registry_Table ...` are globals, not
-   functions - grepping `^\s*private _\w+ = FTCS_(Company_Data|Groups_Registry_Table|Config)\b`
-   is the cheap audit for this class of bug.
-2. Type-guard EVERY hop of a `getOrDefault` chain that feeds UI: a runtime error
-   inside a menu builder silently removes the menu instead of degrading it
-   (Lesson 9: a bad migration fails SILENTLY).
-3. When a menu "does not open", read the RPT FIRST, not the menu arrays: an abort
-   anywhere above `showCommandingMenu` reproduces exactly the same symptom as a
-   bad menu definition.
-
----
-
-## Lesson 27 — The trail TRIM must cut against the OLDEST ARC THE COLUMN OCCUPIES, not against the doctrinal `maxTrailOffset` (+ batch it)
-
-**Date:** 2026-11-16
-**Module:** `Functions/Roads/fn_trailTrimToArc.sqf` (new), `fn_trailAdvanceAnchor.sqf`, `Functions/Movement/fn_formationsTrailQueueSync.sqf`, `fn_trailColumnSet.sqf`
-**Type:** Lesson + Arch/Design
-
-### Symptom (RPT `Arma3_x64_2026-11-16_12-32-27.rpt`)
-
-The trim ran almost EVERY tick, 1-3 m at a time, on a path of only ~115-120 points:
-
-```
-12:48:27  Trim: dropped 1 tail points (2.84m),  path now 120 pts
-12:48:35  Trim: dropped 1 tail points (2.25m),  path now 119 pts
-12:50:37  Trim: dropped 1 tail points (2.78m),  path now 118 pts
-12:53:28  Trim: dropped 1 tail points (108.49m), path now 115 pts   <- bridge span
-```
-
-while the rear of the SAME column still held `off=189 seat=19`, `off=200 seat=13`,
-`off=217 seat=4` with `maxIdx = 117`.
-
-### Verified root cause
-
-```sqf
-private _trimLimit = _headDist - _maxOffset - 200.0;   // WRONG floor
-```
-
-1. `maxTrailOffset` is seeded ONCE by `fn_trailColumnSet` and never recomputed. The
-   compact rewrites `trailOffsetDist`; casualties and re-orders change it too. The
-   trim was cutting against a number that describes a layout that may no longer exist.
-2. With a 217 m column and a 200 m cushion the cut lands INSIDE the column: the
-   oldest points still needed by the tail are dropped, and the groups whose seat
-   falls before the new index 0 have nowhere to walk.
-3. The cushion was not a cushion at all: because `_headDist` is recomputed each tick
-   from a path that the trim itself has shortened, a 2-3 m cut per tick is a machine
-   that keeps working forever - a trim feedback loop that never lets the column settle.
-4. Every trim RENUMBERS every persisted index (`trailLaneTargetIdx`,
-   `trailCursorIdx`). A trim per tick means the whole registry is renumbered
-   continuously - which is why index-based state stayed fragile no matter how many
-   bugs were fixed one by one.
-
-### Correct design (applied)
-
-```
-fn_formationsTrailQueueSync   (sees the WHOLE column: offset + released seat)
-      publishes into the anchor:
-          trailMinSeatArc = headDist - deepestSeatedOffset      (absolute arc)
-          trailTailArc    = deepestSeatedOffset                (telemetry)
-                       ^-1  -> nothing seated, the trim HOLDS
-
-fn_trailAdvanceAnchor  calls fn_trailTrimToArc FIRST (section 0), then records
-
-fn_trailTrimToArc  (single writer of the trim)
-      trimLimit = trailMinSeatArc - trimCushion      (default cushion 100 m)
-      - drops whole head points strictly before the limit
-      - BATCHES: no trim below 10 dropped points (~20 m of march)
-      - FLOOR: never leaves fewer than 3 points
-      - shifts headDist AND the published arcs by the dropped length
-      - renumbers trailLaneTargetIdx / trailCursorIdx
-```
-
-`trailMinSeatArc` is an ABSOLUTE arclength: `headDist` drops by exactly the trimmed
-length and so does the arc, so it survives a trim and keeps addressing the same
-ground on the next tick - which is also why the trim shifts it.
-
-### Rules derived
-
-1. A memory bound (trim, cache eviction, ring buffer) must be driven by the OLDEST
-   LIVE CONSUMER POSITION, never by an assigned/nominal depth. "Assigned" goes
-   stale; "occupied" is measured every tick.
-2. Batch destructive maintenance. A 1-point-per-tick trim is worse than no trim: it
-   costs a full renumber of every persisted index for 2 m of memory.
-3. Never let a maintenance pass rewrite the value that decides when the pass runs
-   (`headDist`), without an invariant that keeps it stable: that is a feedback loop,
-   not an optimization. Here the floor (`_minKeptPts`) plus the cushion guarantees
-   `headDist` can only drop by the trimmed length in the same operation.
-4. The trim runs BEFORE recording, so the append lands in the surviving array; the
-   caller must re-read `trailPath` and `headDist` afterwards.
-
-### Known limitation (documented, accepted)
-
-`trailMinSeatArc` is published by the queue, which lives in the same thread right
-after the recorder. On the very first ticks of a march the queue may not have
-spoken yet (`-1`) and the trim holds; once a seat is published the trim starts with
-a 100 m cushion. On REORDER (compact) the offsets change but `headDist` does not, so
-the floor moves with the new layout on the next tick - which is the intended
-behaviour.
-
----
-
-## Lesson 28 — `private` inside a `for` body lives in the SCRIPT scope: a re-entrant menu rebuild wipes its own loop variables
-
-**Date:** 2026-11-16
-**Module:** `Functions/UI/fn_commandMenusRefresh.sqf` (new), `Functions/Interactions/fn_openSubordinateMenu.sqf`, `fn_applyCommandToTarget.sqf`
-**Type:** Lesson + Arch/Design
-
-### Symptom (RPT `Arma3_x64_2026-11-16_12-32-27.rpt`, 13:42:41)
-
-Twenty errors in ONE second, spread over lines that are NOT consecutive and name
-variables that look "obviously declared":
-
-```
-Error Undefined variable in expression: _pltdatad        (line 281)
-Error Undefined variable in expression: _parsedsquadsd   (lines 291 / 309)
-Error Undefined variable in expression: _sdatad          (line 324)
-```
-
-In game: the subordinate menu never opened, so the Road March layout submenu (and
-with it **Compact Column**) was unreachable.
-
-### Verified root cause
-
-Two things together:
-
-1. **`private` does not create a per-iteration scope.** In SQF a `private` declares
-   the variable in the scope of the SCRIPT, not in the block. A `for` body that
-   declares `private _sqdKeyD = ...` re-declares the SAME script variable on every
-   iteration. That is fine while a single invocation runs.
-2. **The block was RE-ENTRANT.** It lived inline in `fn_openSubordinateMenu`, and
-   `call` from a script that is itself running (the menu rebuild issued by the addAction
-   and by the march dispatcher in the same frame) starts a second instance of the same
-   script scope. Instance B re-declares the variables instance A is still holding, and
-   when A resumes it reads `nil`.
-
-The pattern in the RPT is the fingerprint: errors on the FIRST line of the loop
-(281), then on lines declared at the TOP of its body (290/291), then on lines used
-LATER (309/324) - i.e. a body that ran twice with its `private` re-created underneath.
-
-The line number also proves the file ON DISK was the fixed one (line 281 is the
-`isEqualType` guard). The abort happened BEFORE `showCommandingMenu`, which is why
-the menu disappeared instead of degrading.
-
-### Correct design (applied)
-
-The rebuild was extracted to `fn_commandMenusRefresh` (new `Functions/UI`) with:
-
-```sqf
-// ONE declaration, before the loops; the loop bodies only ASSIGN.
-private _sqdKeyD = "";
-private _sDataD = createHashMap;
-private _hubRow = [];
-... 
-for "_si" from 1 to 4 do {
-    _sqdKeyD = format [...];
-    _sDataD = _parsedSquadsD getOrDefault [...];
-    ...
-};
-```
-
-plus a re-entrancy guard:
-
-```sqf
-if (missionNamespace getVariable ["FTCS_Menu_RefreshBusy", false]) exitWith { false };
-missionNamespace setVariable ["FTCS_Menu_RefreshBusy", true];
-... rebuild ...
-missionNamespace setVariable ["FTCS_Menu_RefreshBusy", false];
-```
-
-`fn_openSubordinateMenu` is now: resolve `_pltId` -> `[_pltId] call
-FTCS_fnc_commandMenusRefresh` -> `showCommandingMenu _menuName`. It no longer OWNS
-the flags, only displays them.
-
-`fn_applyCommandToTarget` calls the refresh at the end of every march-world change
-(ROAD_COLUMN, TRAIL_COLUMN, ROAD_COMPACT, ROAD_COLUMN_LEFT/RIGHT), so the flags are
-correct BEFORE the next menu is shown - a fresh trail column now enables Compact
-immediately instead of on the next full reopen.
-
-### Rules derived
-
-1. **Never declare `private` inside a `for`/`forEach`/`while` body whose value you
-   need after the iteration, or whose script can run re-entrantly.** Declare once,
-   assign inside.
-2. **Any function reachable from an event handler AND from a script thread is
-   re-entrant.** Either make it stateless, or guard it with a single sentinel in
-   `missionNamespace` and an `exitWith` that is safe to skip.
-3. **UI state refresh is its own responsibility.** A menu OPENER opens; a REFRESH
-   computes flags from the registry. Merging them means the flags are only ever as
-   fresh as the last time the user opened a menu (this bug).
-4. When a whole menu vanishes, suspect an abort ABOVE `showCommandingMenu`: the
-   symptom is identical to "the menu does not exist".
-
----
-
-## Lesson 29 — A column resolver must filter its participants with the SAME test the queue uses, or a stale field steals a pair/seat
+## Lesson 29 â€” A column resolver must filter its participants with the SAME test the queue uses, or a stale field steals a pair/seat
 
 **Date:** 2026-11-16
 **Module:** `Functions/Formations/fn_formationsTrailCompactColumn.sqf`
@@ -2072,7 +1802,7 @@ finished order.
 
 ---
 
-## Lesson 30 — The TRIM floor must include the groups that are still WAITING (a seated-only floor starves the tail)
+## Lesson 30 â€” The TRIM floor must include the groups that are still WAITING (a seated-only floor starves the tail)
 
 **Date:** 2026-11-16
 **Module:** `Functions/Movement/fn_formationsTrailQueueSync.sqf`, `Functions/Roads/fn_trailTrimToArc.sqf`, `fn_trailColumnSet.sqf`
@@ -2140,7 +1870,7 @@ Belt and braces: `fn_trailTrimToArc` ALSO floors the cut with the anchor's
 
 ---
 
-## Lesson 31 — A stuck-group escape must skip ONE index, never jump to the seat
+## Lesson 31 â€” A stuck-group escape must skip ONE index, never jump to the seat
 
 **Date:** 2026-11-16
 **Module:** `Functions/Formations/fn_formationsGroupFollowTrail.sqf`
@@ -2195,7 +1925,7 @@ private _nextIdx = ((_targetIdx + 1) min _slotIndex) min _maxIdx;
 
 ---
 
-## Lesson 32 — A memory bound may not depend on data published by a thread that runs AFTER it (trim/record equilibrium)
+## Lesson 32 â€” A memory bound may not depend on data published by a thread that runs AFTER it (trim/record equilibrium)
 
 **Date:** 2026-11-16
 **Module:** `Functions/Roads/fn_trailTrimToArc.sqf`, `Functions/Formations/fn_formationsGroupFollowTrail.sqf`
@@ -2274,7 +2004,7 @@ holds forever, "lost at the back".
 
 ---
 
-## Lesson 33 — When the file is compressed against the trail tip, SPACING must yield to ORDER
+## Lesson 33 â€” When the file is compressed against the trail tip, SPACING must yield to ORDER
 
 **Date:** 2026-11-16
 **Module:** `Functions/Movement/fn_formationsTrailQueueSync.sqf`
@@ -2339,3 +2069,246 @@ Consequences:
    the first one is unrecoverable without new orders, the second one heals itself.
 3. Prefer closing against a measured quantity (indexes left in the trail) than
    against a doctrinal one (metres of separation). The measured one is what exists.
+
+
+---
+
+## Lesson 35 â€” A UI layer must be DATA + one gate function, not 25 hand-built arrays
+
+**Date:** 2026-11-17
+**Type:** Architecture / Design Note (direct guide for an AI)
+
+**What replaced what:** `fn_openSubordinateMenu` (405 lines, deleted) and
+`fn_initCommandingMenus` (607 lines, reduced to three data arrays) are replaced
+by the `Menu` module:
+
+```
+fn_menuCatalog   DATA: menus, rows, tokens, gates, reopen flags
+fn_menuGetState  ONE registry pass -> state snapshot
+fn_menuGate      [gate, state, squadRec] -> [enabled, reason]
+fn_menuBuild     catalog + state -> rows (labels, %1, dynamic rows, hub)
+fn_menuOpen      snapshot -> build -> publish copy -> showCommandingMenu
+fn_menuDispatch  "FAMILY:CODE[:ARG]" -> legacy router code
+fn_menuReopen    one-shot MouseButtonUp re-open
+fn_initMenus     compile catalog once + single player addAction
+```
+
+**Invariants an AI must not break:**
+
+1. The catalog is DATA. No function may mutate it: `fn_menuBuild` returns a NEW
+   array and `fn_menuOpen` publishes that array. This is what killed the "menu
+   corrupted while the engine reads it" family of bugs.
+2. Only functions with backend may be painted. A row for a command without a
+   `case` in `fn_applyCommandToTarget` is a LIE to the player.
+3. Squad identity is the registry (`squadId` + `isSquadLeaderGroup`); the name is
+   a caption only (Rule 18).
+4. "Squad has no leader" means the anchor's leader is `grpNull`, `DEAD` or
+   `INCAPACITATED`. `alive` alone is NOT enough (an unconscious soldier is alive
+   but cannot command) - this is the same test as the scout-slot occupancy.
+5. The menu sentinel `FTCS_Debug_Menu_Mode` is read once and never toggled in
+   game; it is independent of `FTCS_Debug_Mode`.
+6. Re-open behaviour is decided in ONE place (`fn_menuDispatch`).
+
+**Retired:** `fn_commandMenusRefresh` (never present on disk; only referenced by
+docs) and `fn_openSubordinateMenu`.
+
+---
+
+## Lesson 36 â€” A HARDLINK does not "break": it gets DETACHED when an editor rewrites the file (Arma then loads a stale `description.ext`)
+
+**Date:** 2026-11-17
+**Module:** `tools/LinkMission.ps1`, `tools/VerifyLinks.ps1` (new)
+**Type:** Lesson + tooling
+
+### Symptom (RPT `Arma3_x64_2026-11-17_20-38-19.rpt`, 20:40:45)
+
+```
+Warning Message: Script functions\Interactions\fn_openSubordinateMenu.sqf not found
+```
+
+with `fn_openSubordinateMenu.sqf` already deleted from the repository, and with
+`class Menu` present in the repo `description.ext`. The new `Menu` module produced
+NO logs at all - because `CfgFunctions` never saw it.
+
+### Verified root cause
+
+Measured, not guessed:
+
+```
+repo\description.ext              4783 bytes  8x "class Menu"   openSubordinateMenu: 0
+Mission_2\description.ext         4405 bytes  0x "class Menu"   openSubordinateMenu: 1
+Mission_1\description.ext         4405 bytes  0x "class Menu"   openSubordinateMenu: 1
+Mission.Colleville\description.ext 4071 bytes  (REAL FILE, no link)
+```
+
+`Mission_1` and `Mission_2` were hardlinks **to each other** - a closed ring with
+no link to the repository. `Functions/`, `UI/`, `Doctrines/`, `tools/` were (and
+are) **junctions to the repo**, so the mission DID see the new `.sqf` files while
+`description.ext` came from somewhere else.
+
+Why it worked before and stopped: a hardlink shares the SAME inode. It cannot
+desynchronise by itself. It becomes a **separate file** the moment an editor
+saves by writing a new file and replacing the old one (VS Code, many IDEs). From
+then on the two paths show the same "link", but hold different content, and Arma
+reads the mission-side copy.
+
+`FTCS_Dev_Mission.Colleville` was worse: `description.ext` had been relinked (new
+content) but `Functions/`, `Doctrines/`, `UI/` and `tools/` were **real copies**,
+so it declared `class Menu` while its frozen `Functions/` had no `Menu/` folder
+and still contained `fn_openSubordinateMenu.sqf`. That mission would fail to load
+the whole UI layer.
+
+### Rules derived
+
+1. **A junction (folder -> folder) cannot desynchronise. A hardlink (file ->
+   file) can.** For any file the engine reads at load time (`description.ext`,
+   `init.sqf`), verify CONTENT, never the existence of the link.
+2. "The links never failed" and "the file on disk is not the one I edited" are
+   both true at the same time. Check hashes before blaming compilation.
+3. When one mission of a set is broken, check ALL of them: a stale copy in a
+   mission you are not testing will bite later.
+4. Real copies of `Functions/` inside a mission are the worst case: the mission
+   silently runs frozen code.
+
+### Tooling added
+
+- `tools/LinkMission.ps1`: after creating each file link it compares MD5 with the
+  repo and prints `[SYNC OK]` / `[SYNC FAIL]`.
+- `tools/VerifyLinks.ps1` (new): audits every `FTCS_*` mission and reports
+  `[OK] / [FALLO]` per shared file (content hash) and per shared folder
+  (junction vs real copy). Exit code 0 = all missions read the repository.
+  Run it before opening Arma after editing `description.ext` or `init.sqf`.
+
+---
+
+## Lesson 37 â€” Rewriting a `description.ext` from a stale copy silently DELETES CfgFunctions classes (trailTrimToArc vanished, trail column died)
+
+**Date:** 2026-11-17
+**Module:** `description.ext`, `Functions/Roads/fn_trailAdvanceAnchor.sqf`
+**Type:** Lesson
+
+### Symptom (RPT `Arma3_x64_2026-11-17_20-38-19.rpt`)
+
+```
+File ...\functions\Roads\fn_trailAdvanceAnchor.sqf..., line 50
+Error Undefined variable in expression: ftcs_fnc_trailtrimtoarc
+```
+
+The trail column stopped working although `fn_trailTrimToArc.sqf` existed on disk
+and had been verified in game the day before.
+
+### Verified root cause
+
+`description.ext` was rewritten (to add the new `Menu` module) starting from an
+OLDER in-memory/text version. The rewrite dropped
+
+```sqf
+class trailTrimToArc {};
+```
+
+which had been added in commit `1896911`. The `.sqf` file was present in
+`Functions/Roads/` (reachable through the junction), but the engine only compiles
+what `CfgFunctions` declares: the call resolved to an undefined function on EVERY
+tick of the recorder thread.
+
+A class-level diff against `HEAD` afterwards showed exactly: 2 classes lost
+(`openSubordinateMenu`, `commandMenusRefresh` - both intended) and 8 added (the
+`Menu` module). Before the fix the file was 6 classes short of `HEAD`.
+
+### Rules derived
+
+1. **Never rewrite `description.ext` wholesale.** Patch the specific class block.
+   A full rewrite silently drops classes added by someone else.
+2. After ANY edit to `description.ext`, run a class diff against `git HEAD`:
+   ```powershell
+   git diff HEAD -- description.ext | Select-String "class "
+   ```
+   Every removed class must be one you MEANT to remove.
+3. An `Undefined variable in expression: ftcs_fnc_*` error means the function is
+   not registered in `CfgFunctions` - check `description.ext` BEFORE checking the
+   file on disk or the mission links.
+4. `actionParams` was considered for reading action labels from IDs; it is not a
+   documented native command. Use an explicit published ID list instead of
+   introspecting the action list.
+
+---
+
+
+
+## Lesson 38 — Menu gates must read REGISTER fields / sentinels, never internal code state
+**Date:** 2026-11-20
+**Module:** `Functions/Menu/` (fn_menuGate, fn_menuGetState)
+**Type:** Architecture / Design Note (direct guide for an AI) + Lesson
+
+### Symptom (RPT `Arma3_x64_2026-11-20_17-37-02.rpt`, session 18:19-18:31)
+
+The March Route menu row "5. Compact Column" stayed GREYED while a leader-trail
+column was demonstrably marching (trail tip advancing, groups in
+`FOLLOWING_TRAIL`). The same row behaved correctly in road march.
+
+### Verified root cause chain (three distinct bugs found and fixed in this module)
+
+1. **Undeclared variable poisoning the company tree** (fn_applyCommandToTarget,
+   case `PLT_TRAIL_COLUMN`): the legacy write-back `_platoonsMap set [_pltKey,
+   _pltData]` referenced `_pltData` WITHOUT declaring it first (the road case did
+   declare it). Writing nil into `FTCS_Company_Data > platoons > PLT_1` corrupted
+   the doctrinal tree, and EVERY menu open afterwards died with
+   `Undefined variable in expression: _parsedsquads` in fn_menuGetState.
+   Fix: declare `_pltData` like the road case does (later made moot, but the
+   lesson is general: a write-back of an undeclared local silently poisons a
+   GLOBAL structure — the crash appears later, elsewhere, always "in the menu").
+
+2. **Gate deciding against anchor geometry**: `gate_compact` evaluated
+   `roadActive`/`trailActive`/`trailLayout` read from the anchor HashMaps
+   (`FTCS_Road_Anchor_PLT_*`, `FTCS_Trail_Anchor_PLT_*`). Those anchors are
+   per-world geometry that OUTLIVES a mode change (ordering road march does not
+   clear the trail anchor, so `trailActive` stayed true), are mutated every
+   0.25 s by the queue-sync thread, and hold no authoritative mode. Any gate
+   reading them races the writers and mixes two march worlds in one decision.
+
+3. **No observability**: the RPT never logged what the gate actually read
+   (`trailLayout`, `roadLayout`), so the failure mode could only be deduced, not
+   verified. Any gate decision MUST be traceable.
+
+### Rules derived (POLICY — mandated by the user, registered as Point 0 Rule 20)
+
+1. **Menu state is decided ONLY by sentinels**: fields of the registries
+   (`FTCS_Platoons_Registry`, `FTCS_Groups_Registry_Table`) or cataloged
+   missionNamespace flags. NEVER by introspecting function-internal state
+   (anchor HashMaps, spawn threads, locals, debug markers).
+2. **One-way flow**: gameplay code WRITES its state into the registry/sentinel
+   at the moment of change; the menu layer ONLY reads. Fix a missing decision
+   input by ADDING a registry field (single writer + documented in
+   FTCS_Data_Structure_Reference.md), never by reading deeper into code.
+3. **The authoritative march mode of a platoon is**
+   `FTCS_Platoons_Registry[pltId]["movementTechnique"]`
+   (`CROSS_COUNTRY` | `ROAD_COLUMN` | `TRAIL_COLUMN`), written ONLY by the order
+   dispatcher. Gates deriving column availability from anchors are a bug.
+4. **Every gate input must be traceable**: a gate reason string exists already
+   (`[_enabled, _reason]`); extend the `[FTCS][MENU][STATE]` dump under
+   `FTCS_Debug_Menu_Mode` when a gate misbehaves, so the next diagnosis reads
+   values, not inferences.
+
+### Correct pattern (as now implemented in fn_menuGate.sqf)
+
+```sqf
+case (_gate == "gate_compact"): {
+    private _cTech = _state getOrDefault ["moveTech", "CROSS_COUNTRY"];
+    if (!(_cTech in ["ROAD_COLUMN", "TRAIL_COLUMN"])) then {
+        _enabled = false;
+        _reason = "no active column";
+    };
+};
+```
+
+`moveTech` is populated by fn_menuGetState straight from the platoon registry
+(one line, pre-existing read). No anchors, no threads, no timing races.
+
+### Related
+
+- Point 0 Rule 20 (new): menu state policy.
+- FTCS_Data_Structure_Reference.md section 1-bis: sentinel catalog for menus.
+- Lesson 35: UI = DATA + one gate function (this lesson extends it with the
+  "what the data may be" constraint).
+
+---

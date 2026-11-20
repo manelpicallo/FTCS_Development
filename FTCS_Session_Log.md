@@ -1,4 +1,4 @@
-﻿# FTCS — Session Log (estado de trabajo entre sesiones)
+# FTCS — Session Log (estado de trabajo entre sesiones)
 
 > **PARA LA IA QUE RETOMA EL PROYECTO:** lee este fichero DESPUÉS del
 > `FTCS (First-Person Tactical Command Simulation) - Documento de Notas….md`
@@ -20,7 +20,205 @@
 
 ---
 
-## SESIÓN 2026-11-16 (CIERRE) — Columna TRAIL: robusta y funcionando; falta probar el COMPACT
+## SESIÓN 2026-11-20 — Bug trail resuelto + gates al registro + política de centinelas de menú
+
+**Estado:** sesión cerrada con 4 fijaciones aplicadas y VERIFICADAS en disco (pendiente
+solo la validación en partida del fix 4).
+
+### Qué se tocó
+
+1. **BUG PRINCIPAL RESUELTO** — el error `Undefined variable: _parsedsquads/_pltdata`
+   del RPT del día 20 (17:41) tenía la causa raíz en `fn_applyCommandToTarget.sqf`,
+   caso `PLT_TRAIL_COLUMN` línea 770: write-back `_platoonsMap set [_pltKey, _pltData]`
+   con `_pltData` SIN DECLARAR (el caso ROAD sí la declara, línea 502). Envenenaba
+   `FTCS_Company_Data > platoons > PLT_1` y reventaba al abrir cualquier menú.
+   **Fix:** declarar `_pltData` igual que ROAD (confirmado por el usuario: "solucionado").
+
+2. **Gates UNKNOWN eliminados** — `UNKNOWN GATE ''` (filas de navegación sin gate:
+   ahora el build las deja enabled sin llamar al resolutor), `gate_scout` y
+   `gate_squads` (añadidos como casos reales en fn_menuGate: al menos una escuadra
+   con efectivos).
+
+3. **Acción duplicada en la rueda eliminada** — borrado el bloque legacy
+   `[Platoon Orders] Command Net (Radio / Voice)` en fn_initUnitInteractions.sqf
+   (más sus 2 acciones SUSPENDED asociadas). Solo queda `[FTCS] Command Menu (Wheel)`
+   de fn_initMenus. Cabecera del fichero actualizada (Regla 6).
+
+4. **Compact en trail arreglado EN SERIO** — la fila 5 seguía gris con trail activo
+   porque `gate_compact` decidía contra las ANCLAS (geometría que sobrevive al cambio
+   de modo y que muta el queue-sync cada tick). Ahora decide contra
+   `FTCS_Platoons_Registry[plt]["movementTechnique"]`: ROAD_COLUMN o TRAIL_COLUMN →
+   blanca; CROSS_COUNTRY → gris. Igual criterio para gate_edge_push/pull (filas 6/7/8:
+   solo ROAD_COLUMN). Pendiente de validar en partida.
+
+### Política nueva registrada (mandato del usuario)
+
+**Punto 0, Regla 20**: los menús deciden su estado SOLO contra centinelas (campos de
+registro o flags catalogados); PROHIBIDO introspeccionar estado interno de funciones.
+Catálogo completo en `FTCS_Data_Structure_Reference.md` sección 1-bis; lección técnica
+en `FTCS_Programming_Lessons.md` Lesson 38.
+
+### Pendiente
+
+- Validar en partida el fix 4 (trail → fila 5 blanca; road → 5/6/7/8 blancas).
+- Revisar el gate `gate_layout_*` (fn_menuGate líneas 160-170): todavía lee layouts de
+  anclas para el matiz "already active". Candidato a migrar al mismo criterio registro
+  en la próxima sesión.
+- `FTCS_Menu_Structure_Reference` (referenciado en Punto 0 Regla 13) NO existe en el
+  proyecto: decidir si se crea o se retira la regla.
+
+### Cómo probarlo
+
+Salir a Eden y re-entrar (no cambia CfgFunctions, pero los ficheros se compilan al
+cargar la misión). Ordenar Trail → menú March Column: fila 5 blanca, 6/7/8 grises.
+Compactar → fila 5 se re-grisa hasta re-emitir trail. Ordenar Road → 5/6/7/8 blancas.
+
+---
+
+## SESIÓN 2026-11-17 (CIERRE) — Rediseño de menús entregado; ERROR `_parsedSquads` SIN RESOLVER
+
+**Estado:** el módulo `Menu` está implementado y ARRANCA, pero **el error
+`Undefined variable: _parsedSquads / _pltData` SIGUE ABIERTO tras un día entero de
+diagnóstico.** No hay solución aplicada.
+
+### 1. Qué SÍ está hecho y funciona
+
+- Módulo `Menu` con 8 ficheros: `menuCatalog` (datos), `menuGetState`, `menuGate`,
+  `menuBuild`, `menuOpen`, `menuDispatch`, `menuReopen`, `initMenus`.
+- Podados 17 menús sin backend y `SquadSelect_Common` (nombres hardcodeados).
+- Borrado `fn_openSubordinateMenu.sqf` (405 líneas) y todas sus llamadas.
+- `description.ext`: módulo `Menu` registrado, `openSubordinateMenu` dado de baja,
+  **`class trailTrimToArc` restaurada** (se había perdido al reescribir el fichero).
+- `fn_applyDoctrine`: `find "mortar"` → dato de doctrina `"unifiedSquads"` (+3 doctrinas).
+- `fn_applyCommandToTarget`: `ADVANCE_DEFEND` antes de `ADVANCE_DETACH_`; `default`
+  ya no miente (`*** UNHANDLED COMMAND`).
+- `init.sqf`: eliminado el `addAction` viejo del líder.
+- **Verificado en el RPT:** `[FTCS][MENU] initialized (mode=DEBUG)`, menú abierto con
+  11 filas, órdenes despachadas (`SET_PHASE_2`, `PLT_TRAIL_COLUMN`), 5 escuadras
+  detectadas por el registro. `fn_openSubordinateMenu.sqf not found`: desaparecido.
+
+### 2. El error ABIERTO (lo que hay que resolver en la próxima sesión)
+
+```
+Error in expression <...isEqualType createHashMap)) then { _pltData = ...
+Error Undefined variable in expression: _pltdata
+Error Undefined variable in expression: _parsedsquads
+File ...\Functions\Menu\fn_menuGetState.sqf
+```
+
+**Datos recogidos con `[FTCS][DIAG]` (los únicos hechos firmes):**
+
+```
+21:42:48  DIAG parsedSquads keys=["SQD_1_2","SQD_1_4",...]  name=1st Rifle Squad
+21:42:55  DIAG parsedSquads keys=array                        name=any
+```
+
+- **`keys=array`**: en esa llamada `_parsedSquads` **no es un HashMap**.
+- **`name=any`**: `getOrDefault` devuelve el valor por defecto.
+- Correlación: falla **siempre tras ordenar `PLT_TRAIL_COLUMN`**, y la primera vez
+  que se ordena trail funciona. Reiniciar la misión lo resetea.
+- Las 10 apariciones del error son **siempre en la misma línea**
+  (`if (!(_pltData isEqualType createHashMap))`).
+- `line 770` de `fn_applyCommandToTarget` **NUNCA** dio error: descartado.
+
+**Hipótesis DESCARTADAS (no volver a ellas):**
+
+| Hipótesis | Por qué se descartó |
+|---|---|
+| Enlaces/junctions roto | Junction y hardlink verificados; hash idéntico |
+| `description.ext` desincronizado | Sincronizado y verificado en las 3 misiones |
+| Fichero recompilado en 3DEN | El error sale con el hash correcto en disco |
+| `private` re-declarado en bucles | Corregido; el error persiste |
+| Reentrada por `MouseButtonUp` | `[REOPEN] buttonUp` = 0 apariciones en el RPT |
+| `params` heredando del hilo | Cambiado a `_this` + validación; **el usuario pidió revertir** |
+| `_pltData` en la línea 770 | Nunca aparece ese error en el log |
+
+### 3. Lo único que falta por probar
+
+**Una línea de diagnóstico que muestre qué llega en la llamada que falla:**
+
+```sqf
+// Al principio de fn_menuGetState
+diag_log format ["[FTCS][DIAG] _this=%1 type=%2 | _pltId=%3 type=%4",
+    _this, typeName _this, _pltId, typeName _pltId];
+```
+
+**No se ha aplicado.** Es el siguiente paso.
+
+### 4. Documentación borrada hoy
+
+- **Lecciones 34, 38, 39** (eliminadas antes, todas con diagnóstico erróneo).
+- **Lecciones 26 y 28** + sus filas del índice: describían este mismo error con la
+  causa equivocada (`global como receptor`, `private` en `for` + reentrancia).
+- Se conservan 35, 36, 37 (arquitectura del módulo, hardlinks, `description.ext`).
+
+### 5. Aviso de compilación
+
+> ⚠️ **Módulo `Menu` (8 funciones) en `CfgFunctions` y baja de
+> `openSubordinateMenu` + `class trailTrimToArc` restaurada.**
+> Imprescindible **salir a 3DEN y volver a entrar**.
+
+---
+
+**Estado:** implementado en disco. **NO probado en partida todavía.**
+
+### 1. Qué se hizo
+
+Se sustituyó la UI de menús (25 arrays hechos a mano + `fn_openSubordinateMenu` de
+405 líneas) por un módulo de 8 funciones pequeñas con responsabilidad única:
+
+```
+fn_menuCatalog   DATOS: menús, filas, tokens, gates, marca de reapertura
+fn_menuGetState  UNA pasada al registro -> snapshot de estado del pelotón
+fn_menuGate      [gate, estado, escuadra] -> [enabled, motivo]
+fn_menuBuild     catálogo + estado -> filas (labels, %1, filas dinámicas, hub)
+fn_menuOpen      snapshot -> build -> publica copia -> showCommandingMenu
+fn_menuDispatch  "FAMILIA:CODIGO[:ARG]" -> código del router existente
+fn_menuReopen    reapertura de un disparo por MouseButtonUp
+fn_initMenus     compila el catálogo una vez + addAction única del jugador
+```
+
+### 2. Decisiones cerradas (todas del programador)
+
+- Números `N.` en todos los labels (el número es la tecla).
+- Grises SÍ, pero solo para comandos implementados; cada gris muestra su motivo.
+- Escuadra sin **líder vivo y no incapacitado** -> fila gris con el estado.
+- Escuadras desde el registro; la que no existe no se pinta.
+- Hub `Squad & Scout Directives` conservado (Scouts en fila 1, escuadras detrás).
+- Scouts solo a nivel de pelotón (no dentro del menú de escuadra).
+- Nombres SIEMPRE de la doctrina; cero nombres en el código.
+- `FTCS_Debug_Menu_Mode` como tercer centinela, en `fn_registryInit`, inmutable en partida.
+- Log completo en modo DEBUG, sin filas de diagnóstico en el menú.
+- Reapertura por `MouseButtonUp` en navegación y estado.
+
+### 3. Excepciones aprobadas (fuera de menús)
+
+- `fn_applyCommandToTarget`: reordenado `ADVANCE_DEFEND` antes de `ADVANCE_DETACH_`
+  (el segundo `case` nunca se alcanzaba) y `default` que ya no miente: loguea
+  `*** UNHANDLED COMMAND`.
+- `fn_applyDoctrine`: `find "mortar"` sustituido por el dato de doctrina
+  `"unifiedSquads"` (Regla 18: el nombre no decide estructura).
+- `Doctrines/Data/*.sqf` (3): alta de `"unifiedSquads"`.
+
+### 4. Retirado
+
+- `Functions/Interactions/fn_openSubordinateMenu.sqf` (borrado).
+- 17 menús sin backend y los `FTCS_MENU_SquadSelect_Common` hardcodeados.
+- `fn_commandMenusRefresh` (ya no existía en disco).
+
+### 5. NO verificado
+
+- No se ha ejecutado Arma: **falta la prueba en partida**.
+- Sin probar: reapertura por MouseButtonUp, grises contra estado real,
+  reordenación de `ADVANCE_DEFEND`, `unifiedSquads` en las 3 doctrinas.
+
+### 6. Aviso de compilación
+
+> ⚠️ **MÓDULO NUEVO EN `CfgFunctions`: `Menu`** (8 funciones) y baja de
+> `openSubordinateMenu`. Es imprescindible **salir de la misión → editor 3DEN →
+> volver a entrar**. Un *Restart* in-game no recompila `description.ext`.
+
+---
 
 **Estado:** la **columna de trail funciona perfectamente y es muy robusta tal y como
 está implementada ahora** (valoración del programador en partida). Arranca en cascada,
@@ -110,6 +308,25 @@ Documentación al día: `FTCS_Data_Structure_Reference.md` (§3, campos nuevos d
 `FTCS_Programming_Lessons.md` (Lecciones 24-33), `FTCS_Menu_Structure_Reference`
 (propiedad del estado de los menús).
 
+### 4-bis. Episodio de la tarde: regresión del refresco de menús (CERRADA por reversión)
+
+Entre las **19:00 y las 19:30** aparecieron errores `Undefined variable` en
+`fn_commandMenusRefresh` que no existían a las 15:02. **Los introduje yo** con ediciones
+sucesivas del guard y del punto de llamada; el código de las 15:02 (commit `1896911`
+"Trail mode prefecta") funcionaba y siguió funcionando hasta que se tocó.
+
+**Cerrado revirtiendo el fichero a `1896911`**, byte a byte, y el dispatcher a `call`.
+Fuera todo lo añadido en esa franja: guard por `FTCS_Menu_RefreshTick`, las locales
+`_menu*`, `spawn` y `_registryRef`.
+
+**Dos diagnósticos descartados que deben olvidarse** (no se recogen en las lecciones
+porque era falso): “global como receptor de `select`/`forEach`” y “scope de `call`”.
+El código que funcionaba ya hacía AMBAS cosas.
+
+> **Regla de trabajo para la próxima sesión:** ante un informe de regresión, comparar
+> con el ÚLTIMO COMMIT CONOCIDO BUENO antes de diagnosticar. Había commits disponibles
+y no se usaron hasta mucho después.
+
 ### 5. Pendiente — lo único que queda
 
 1. **Probar el COMPACT de trail con la columna ya robusta.** Qué comprobar:
@@ -128,7 +345,10 @@ Documentación al día: `FTCS_Data_Structure_Reference.md` (§3, campos nuevos d
    helper común con dos samplers.
 3. Compact de carretera: pasar del footprint medido al nominal (el de trail ya lo usa).
 4. **PENDING-5**: `_slotOrder = [9,0,4,1,2,3,10,5]` duplicado → extraer a función.
-5. **PENDING-6**: auditar otros usos de globales como receptor de `getOrDefault`.
+5. **PENDING-6 (prioridad)**: auditar los globals usados como receptor (`getOrDefault` /
+   `forEach` / `select`) en TODO el proyecto. Ya ha mordido tres veces (Lecciones 26 y
+   35). Un grep inicial encontró ~72 coincidencias; solo rompen en posición de
+   receptor, pero hay que revisarlas una a una.
 6. Grupo sin líder vivo / líder inconsciente: no comprobado; el watchdog cubre sólo
    líder VIVO.
 

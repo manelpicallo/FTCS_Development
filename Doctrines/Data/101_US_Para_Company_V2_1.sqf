@@ -1,4 +1,4 @@
-﻿/*
+/*
     ================================================================================
     FTCS DOCTRINE DATA TEMPLATE: 101_US_Para_Company_V2_1
     Generated automatically from 3DEN Composition: FTCS_101_US_Para_Company_V2_1
@@ -23,6 +23,7 @@ createHashMapFromArray [
     ["companyHQRoles", ["CO_CAPTAIN", "XO_LIEUTENANT", "FIRST_SERGEANT", "COMM_SERGEANT", "RADIO_OPERATOR", "MESSENGER_1", "MESSENGER_2", "COMPANY_MEDIC"]],
     ["platoonHQRoles", ["PLATOON_LEADER", "PLATOON_SERGEANT", "PLATOON_RTO", "PLATOON_RUNNER", "PLATOON_MEDIC", "PLATOON_GUIDE", "PLATOON_MESSENGER"]],
     ["platoonHQTeamStructure", [["Command Element", ["PLATOON_LEADER", "PLATOON_RTO"]], ["Support Element", ["PLATOON_SERGEANT", "PLATOON_RUNNER", "PLATOON_MEDIC"]], ["Guide & Security Element", ["PLATOON_GUIDE", "PLATOON_MESSENGER"]]]],
+    ["unifiedSquads", ["SQD_1_4", "SQD_2_4", "SQD_3_4", "SQD_4_4"]],
     ["squadDesignations", createHashMapFromArray [
         ["SQD_1_1", "1st Rifle Squad"],
         ["SQD_1_2", "2nd Rifle Squad"],

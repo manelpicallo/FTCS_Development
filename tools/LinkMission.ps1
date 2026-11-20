@@ -143,6 +143,22 @@ foreach ($item in $SharedItems) {
         New-Item -ItemType HardLink -Path $dst -Target $src -ErrorAction Stop | Out-Null
     }
     Write-Host "[LINK] $item -> $src" -ForegroundColor Green
+
+    # VERIFICACION DE SINCRONIA.
+    # Un hardlink NO puede desincronizarse por si mismo, pero un editor que
+    # reescribe el fichero (en lugar de modificarlo en sitio) lo separa del repo
+    # sin romper el enlace visible: el contenido deja de coincidir y Arma carga
+    # una version vieja. Aqui se comprueba en el acto, tras crear el enlace.
+    if (-not $srcItem.PSIsContainer) {
+        $srcHash = (Get-FileHash -Path $src -Algorithm MD5).Hash
+        $dstHash = (Get-FileHash -Path $dst -Algorithm MD5).Hash
+        if ($srcHash -eq $dstHash) {
+            Write-Host "[SYNC OK] $item (hash identico al repo)" -ForegroundColor DarkGreen
+        } else {
+            Write-Host "[SYNC FAIL] $item NO coincide con el repo tras enlazarlo." -ForegroundColor Red
+            Write-Host "            La mision cargara contenido distinto al del repositorio." -ForegroundColor Red
+        }
+    }
 }
 
 # ---------------------------------------------------------------------------

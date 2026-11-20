@@ -216,17 +216,10 @@ Selected_Vehicle_list = [];
                         diag_log "FTCS: Temporary player entity assigned successfully.";
                     };
 
-                    // 3. Add self-action on player to re-open menu if closed
-                    player addAction [
-                        "<t color='#00FFCC'>[FTCS] Menú de Despliegue Operacional</t>",
-                        { [] spawn FTCS_fnc_openDeployMenu; },
-                        [],
-                        10,
-                        false,
-                        true,
-                        "",
-                        "isNil 'FTCS_Initialized' || {!FTCS_Initialized}"
-                    ];
+                    // 3. The legacy deployment self-action ("Menú de Despliegue
+                    // Operacional") is deliberately NOT created: the deployment UI
+                    // is opened once below. The only persistent player action in the
+                    // project is the commanding-menu one owned by fn_initMenus.
 
                     // 4. Brief delay to ensure UI engine and display systems are ready, then open dialog
                     sleep 0.3;

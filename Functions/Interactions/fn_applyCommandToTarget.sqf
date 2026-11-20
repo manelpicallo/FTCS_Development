@@ -213,10 +213,11 @@ switch (_commandCode) do {
         if (!isNull _targetSqdLeader) then {
             // Set active menu context to the selected squad leader and open its squad menu after commandingMenu closes
             systemChat format ["[SQUAD SELECTION] Direct command active for %1.", _targetSqdName];
-            [_targetSqdLeader, _targetSqdName] spawn {
-                params ["_ldr", "_name"];
+            private _sqdMenuId = format ["FTCS_MENU_SquadOrders_%1", _sqdNum];
+            [_targetSqdLeader, _sqdMenuId] spawn {
+                params ["_ldr", "_menuId"];
                 sleep 0.05;
-                [_ldr, player, 0, ["SQUAD", _name, true]] call FTCS_fnc_openSubordinateMenu;
+                [_menuId] call FTCS_fnc_menuOpen;
             };
         } else {
             systemChat format ["[SQUAD SELECTION] Warning: %1 not found or unavailable.", _targetSqdName];
@@ -721,10 +722,6 @@ switch (_commandCode) do {
         private _modeStr = if (_roadCategory == "ROAD") then { "STAGGERED COLUMN (Dual Shoulder)" } else { "TRAIL COLUMN (Single File)" };
         systemChat format ["[ROAD MARCH] Platoon deployed in %1 along %2 (Width %3m).", _modeStr, _roadCategory, round _roadWidth];
         hint parseText format ["<t color='#00FFCC'>[ROAD MARCH ACTIVATED]</t><br/><t color='#FFFFFF'>Technique:</t> %1<br/><t color='#FFAA00'>Road Width:</t> %2m<br/><t color='#AAAAAA'>Troops staggered on shoulders and following route.</t>", _modeStr, round _roadWidth];
-
-        // The march world just changed: refresh the menu flags now, so the Compact
-        // row is already enabled the next time Layout is displayed.
-        [_pltId] call FTCS_fnc_commandMenusRefresh;
     };
 
     // =========================================================================
@@ -745,6 +742,7 @@ switch (_commandCode) do {
         private _pltId = _pltIdT;
         private _pltKey = format ["PLT_%1", _pltId];
         private _platoonsMap = FTCS_Company_Data getOrDefault ["platoons", createHashMap];
+        private _pltData = _platoonsMap getOrDefault [_pltKey, createHashMap];
 
         // PHASE 8b: subordinate groups by platoonId from the registry (RULE 16)
         private _trailGroups = [];
@@ -825,10 +823,6 @@ switch (_commandCode) do {
 
         systemChat format ["[TRAIL COLUMN] Platoon chained on leader track (%1 teams).", _chainedCount];
         hint parseText "<t color='#00FFCC'>[TRAIL COLUMN ACTIVATED]</t><br/><t color='#FFFFFF'>Trajectory:</t> Leader's own track<br/><t color='#AAAAAA'>Every team inherits the exact terrain line the leader walked.</t>";
-
-        // Trail anchor now exists: this is what enables the Compact row for the
-        // trail world without reopening the menu from scratch.
-        [_pltIdT] call FTCS_fnc_commandMenusRefresh;
     };
 
     // =========================================================================
@@ -873,9 +867,6 @@ switch (_commandCode) do {
 
         [_pltIdC, "BOTH"] call FTCS_fnc_formationsRoadCompactColumn;
         hint parseText "<t color='#00FFCC'>[ROAD COMPACT]</t><br/><t color='#FFFFFF'>Staggering removed.</t><br/><t color='#AAAAAA'>Left and right shoulder teams march at matching distances (pace + 2m gap).</t>";
-
-        // columnLayout changed: refresh so the Compact row reflects the new layout.
-        [_pltIdC] call FTCS_fnc_commandMenusRefresh;
     };
 
     // =========================================================================
@@ -899,9 +890,6 @@ switch (_commandCode) do {
             private _scope = if (_forcedSide == -1) then { "LEFT" } else { "RIGHT" };
             [_pltIdS, _scope] call FTCS_fnc_formationsRoadCompactColumn;
             hint parseText format ["<t color='#00FFCC'>[ROAD COLUMN: %1]</t><br/><t color='#FFFFFF'>Single-shoulder column re-chained.</t><br/><t color='#AAAAAA'>All teams moved to the %2 shoulder (standard pacing).</t>", _sideStr, toLower _sideStr];
-
-            // LEFT/RIGHT layout: the Compact row must go grey immediately.
-            [_pltIdS] call FTCS_fnc_commandMenusRefresh;
         } else {
             // PATH 2 - fresh order: route through PLT_ROAD_COLUMN with the forced side
             // injected, so the full pipeline (path, anchor, AI, threads, watchdog) runs
@@ -1591,8 +1579,11 @@ switch (_commandCode) do {
         private _applyCode = "";
         private _arrivalBehaviour = "KEEP_FORMATION";
         switch (true) do {
-            case (_commandCode find "ADVANCE_DETACH_" >= 0): { _applyCode = "ADVANCE_DETACH_HOLD"; _movementToken = false; };
+            // ADVANCE_DEFEND must be tested BEFORE ADVANCE_DETACH_: the latter is a
+            // substring of the former, so the original order swallowed "..._DEFEND"
+            // and "Move to Target & Defend" silently behaved as "...& Hold".
             case (_commandCode find "ADVANCE_DEFEND" >= 0): { _applyCode = "ADVANCE_DETACH_DEFEND"; _movementToken = false; };
+            case (_commandCode find "ADVANCE_DETACH_" >= 0): { _applyCode = "ADVANCE_DETACH_HOLD"; _movementToken = false; };
             case (_commandCode find "ADVANCE_KEEP" >= 0): { _applyCode = "ADVANCE_KEEP"; _movementToken = true; _arrivalBehaviour = "KEEP_FORMATION"; };
             case (_commandCode find "DEFEND_" >= 0): { _applyCode = "DEFEND"; _movementToken = false; };
             case (_commandCode find "FLANK_OPEN_R" >= 0): { _applyCode = "FLANK_OPEN_R"; _movementToken = false; };
@@ -2230,6 +2221,12 @@ switch (_commandCode) do {
 
     // Default Fallback
     default {
-        systemChat format ["[ORDER EXECUTED] Directive '%1' issued to %2 (%3).", _commandCode, _targetName, _targetRole];
+        // A command code that reaches here has NO backend: nothing was executed.
+        // The previous message ("[ORDER EXECUTED]") LIED to the player and hid the
+        // gap; it is now a real failure in the log, prefixed per Rule 19 so it is
+        // visible at a glance behind the debug sentinel.
+        systemChat format ["[ORDER] Directive '%1' is not implemented.", _commandCode];
+        diag_log format ["[FTCS][ORDER] *** UNHANDLED COMMAND '%1' (target=%2 role=%3) - nothing executed.",
+            _commandCode, _targetName, _targetRole];
     };
 };

@@ -52,6 +52,17 @@ if (isNil "FTCS_Debug_Trace") then {
     FTCS_Debug_Trace = false;
 };
 
+// MENU UI sentinel. Selects WHICH commanding UI the session runs and how much it
+// logs. READ ONCE at boot and NEVER toggled in game (design decision): a session
+// starts either in menu-debug mode or with the real gameplay menus, and stays
+// there. true = debug tree (every implemented order reachable, full log dump of
+// state and dispatched orders) | false = real gameplay menus (not implemented yet).
+// It is INDEPENDENT of FTCS_Debug_Mode: telemetry and the menu layer are two
+// separate switches so any combination of the two is possible.
+if (isNil "FTCS_Debug_Menu_Mode") then {
+    FTCS_Debug_Menu_Mode = true;
+};
+
 missionNamespace setVariable ["FTCS_Platoon_Advance_Direction", 0];
 missionNamespace setVariable ["FTCS_Last_Commander_Dir", getDir player];
 

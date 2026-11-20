@@ -123,12 +123,20 @@ class CfgFunctions
             class initUnitInteractions {};
             class initCommandingMenus {};
             class applyCommandToTarget {};
-            class openSubordinateMenu {};
         };
 
-        class UI
+        // Commanding UI layer (data-driven menus). fn_openSubordinateMenu was
+        // retired: the whole UI is owned by this module now.
+        class Menu
         {
-            class commandMenusRefresh {};
+            class menuCatalog {};
+            class menuGetState {};
+            class menuGate {};
+            class menuBuild {};
+            class menuOpen {};
+            class menuDispatch {};
+            class menuReopen {};
+            class initMenus {};
         };
 
         class Spawning

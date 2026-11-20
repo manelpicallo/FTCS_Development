@@ -13,6 +13,49 @@ Las fases doctrinales (FM 3-21.8) se estructuran en 3 grandes etapas:
 2. CONTACT LIKELY / OVERWATCH PHASE (Aproximación Cauta / Zonas de peligro y obstáculos)
 3. COMBAT, ASSAULT & CONSOLIDATION PHASE (Combate, asalto, flanqueo de pelotón y reorganización)
 
+[PROPIEDAD DEL ESTADO DE LOS MENÚS - MÓDULO Menu]
+- La UI está ENTERAMENTE declarada como DATOS en `Functions/Menu/fn_menuCatalog.sqf`.
+  Ninguna función construye arrays de menú a mano. Añadir una orden = añadir una
+  FILA en el catálogo (label, token, gate, reabrir).
+- Cadena de responsabilidades (una por fichero):
+    fn_menuGetState  lee el registro UNA vez -> snapshot de estado
+    fn_menuGate      decide blanco/gris + motivo para una fila
+    fn_menuBuild     aplica los gates, sustituye %1, inyecta filas dinámicas
+    fn_menuOpen      ÚNICO punto de entrada: snapshot -> build -> publica copia -> show
+    fn_menuDispatch  token ("FAMILIA:CODIGO[:ARG]") -> código del router
+    fn_menuReopen    reapertura de un disparo por MouseButtonUp
+    fn_initMenus     compila el catálogo una vez + addAction única del jugador
+- El catálogo NUNCA se muta: se construye una copia nueva por apertura y se
+  publica en `FTCS_MENU_<id>_Var`, que es lo único que lee el motor.
+- Retirados (código y documentación): `fn_openSubordinateMenu` y
+  `fn_commandMenusRefresh` (este último ya no existía en disco).
+
+[CENTINELA DE MENÚS - FTCS_Debug_Menu_Mode]
+- Tercer centinela, INDEPENDIENTE de `FTCS_Debug_Mode` (telemetría) y de
+  `FTCS_Debug_Trace` (verbosidad). Se declara en `fn_registryInit` sección 1.
+- Se LEE una vez y NO se alterna en partida: la sesión arranca en modo menú
+  debug (true, por defecto) o con los menús reales del simulador (false).
+- true  -> raíz `FTCS_MENU_Root` (todo lo implementado accesible, volcado
+           completo de estado y órdenes al RPT).
+- false -> raíz `FTCS_MENU_RealRoot` (PLACEHOLDER: los menús de juego se
+           implementarán en una pasada posterior según este documento).
+
+[REGLAS DE LOS MENÚS]
+- Máximo 12 filas por menú. La contención se hace AGRUPANDO FAMILIAS en la raíz
+  (una fila por familia), nunca recortando filas.
+- GRISES: se mantienen, pero SOLO para comandos IMPLEMENTADOS. Un comando sin
+  backend NO se pinta (no hay botones que finjan funcionar). Cada gris muestra su
+  motivo en el propio label ("already active", "no road column", "leader dead").
+- Existencia de escuadras: se lee del REGISTRO. Una escuadra inexistente no se
+  pinta. Nunca `for 1 to 4`.
+- Estado del líder de escuadra: la fila va gris salvo que el líder del grupo ancla
+  esté VIVO y NO INCAPACITADO. Arma reasigna líder al morir, pero NO recupera
+  inconscientes: ese gris es un estado real y transitorio (la futura rutina de
+  recuperación lo devuelve a blanco).
+- Reapertura: `MouseButtonUp` de un disparo (pulsar ejecuta, soltar reabre). Se
+  aplica a filas de NAVEGACIÓN y de ESTADO; las órdenes terminales cierran el
+  menú. La lista se decide en `fn_menuDispatch` (un solo sitio).
+
 [ESTADO DE IMPLEMENTACIÓN Y VISIBILIDAD EN MOTOR]
 - Fase inicial tras el despliegue: FASE 0 (DEPLOYMENT / INSPECTION - Tropas congeladas en formación de revista).
 - Activación táctica: El teniente debe ordenar explícitamente una fase operacional (Set Phase 1 / 2 / 3) para despertar a las tropas. Las órdenes de formación están bloqueadas mientras el pelotón permanezca en Fase 0.
@@ -29,6 +72,15 @@ Las fases doctrinales (FM 3-21.8) se estructuran en 3 grandes etapas:
     - Opcion 13: REJOIN - Re-group (Lieutenant Current Facing). Contrato NEW: la geometria congelada se rota sobre el eje de avance actual del teniente.
 - Formaciones de Escuadra: Soportadas hasta 5 sub-equipos (1 Líder + hasta 4 grupos subordinados). En Fase 1 (APPROACH) los flancos de cuña/Vee adoptan dinámicamente ECHELON_RIGHT y ECHELON_LEFT para escalonamiento de marcha en columna relajada. En Fase 2 (CONTACT LIKELY / OVERWATCH) las escuadras recuperan su geometría táctica abierta completa (WEDGE/LINE) en disciplina estricta AWARE.
 - Resto de opciones: Visibles en UI pero desactivadas (gris claro / enable="0") hasta su implementación.
+
+[PENDIENTE - SIN BACKEND EN EL ROUTER]
+Las siguientes órdenes del diseño doctrinal NO tienen implementación y NO se
+pintan en ningún menú. Se implementarán en la pasada de jugabilidad:
+Bounding Overwatch, LDA Crossing Protocols (SBF/Crossing/Leapfrog), Platoon
+Assault Wave, Flanking Envelopment, Base of Fire, Fall Back del pelotón, Fire
+Direction/TRP, Sustainment & MEDEVAC, Fire Support Coordination, TLP Planning,
+Radio, Runner, Medical Triage, Visual Signals, Push/Fall Back por metros,
+Shift Lateral, Breach/Clear, Engage at Crosshair, Post-Assault Consolidation.
 
 [PROPIEDAD DEL ESTADO DE LOS MENÚS - fn_commandMenusRefresh]
 - Los menús son ARRAYS estáticos creados una vez por fn_initCommandingMenus. Su

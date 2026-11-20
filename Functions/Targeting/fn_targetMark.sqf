@@ -223,12 +223,11 @@ private _clickEH = (findDisplay 46) displayAddEventHandler ["MouseButtonDown", {
 
         [] spawn {
             sleep 0.5; // commanding-menu engine cooldown after the click closes
-            // Rebuild the squad-order menus with the NEW target state before
-            // reopening: the enable flags of rows 2-8 are computed at build time.
-            call FTCS_fnc_initCommandingMenus;
-            private _menuName = format ["#USER:FTCS_MENU_SquadOrders_%1",
-                missionNamespace getVariable ["FTCS_TGT_OwnerSquadIndex", 1]];
-            showCommandingMenu _menuName;
+            // Re-open the SAME squad orders menu with the new target state. The
+            // menu is DATA: nothing needs to be rebuilt here (the removed
+            // fn_initCommandingMenus call used to regenerate 25 arrays per capture).
+            private _soi = missionNamespace getVariable ["FTCS_TGT_OwnerSquadIndex", 1];
+            [format ["FTCS_MENU_SquadOrders_%1", _soi]] call FTCS_fnc_menuOpen;
         };
     };
 

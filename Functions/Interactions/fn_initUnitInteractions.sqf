@@ -13,16 +13,15 @@
 
     ============================================================================
     ACTIONS SUSPENDED (design decision, session):
-    NPCs receive NO addAction. The player receives ONLY the
-    "[Platoon Orders] Command Net (Radio / Voice)" self-action, with NO
-    visibility restriction (works even when looking at an NPC).
+    NPCs receive NO addAction. The player's commanding UI is registered ONLY by
+    fn_initMenus ([FTCS] Command Menu (Wheel)): this module adds NO player
+    self-action (the legacy "[Platoon Orders] Command Net" was removed - it
+    duplicated the wheel action of the retired menu system).
 
     INIT PROCESS MAP (where in the init sequence this lives):
       1. Below: helper definitions (_fnc_add*Actions) - definitions only.
       2. "FTCS_NPC_ACTIONS_ENABLED" gate - set true to re-enable ALL NPC
          action assignment (the big platoon/squad forEach loop further down).
-      3. Player self-action block - "PLATOON_COMMANDER" branch registers the
-         single [Platoon Orders] action on `player` (always-visible condition).
     ============================================================================
 */
 
@@ -34,7 +33,7 @@ private _processedUnits = [];
 
 // Ensure native commanding menus are initialized in memory
 if (isNil "FTCS_CommandingMenus_Initialized") then {
-    call FTCS_fnc_initCommandingMenus;
+    call FTCS_fnc_initMenus;
 };
 
 // Reset or initialize action assignment cache to prevent duplicates
@@ -78,7 +77,7 @@ private _fnc_addCompanyHQActions = {
         "<t color='#00FFCC'>[Orders] Company Directives</t>",
         { 
             params ["_target", "_caller", "_actionId"];
-            [_target, _caller, _actionId, ["STAFF", "Company Staff"]] call FTCS_fnc_openSubordinateMenu;
+            ["FTCS_MENU_SquadHub"] call FTCS_fnc_menuOpen;
         },
         [], 2.0, 15.0, "cursorObject == _target"
     ] call FTCS_fnc_addEngineAction;
@@ -152,7 +151,7 @@ private _fnc_addPlatoonSergeantActions = {
         { 
             params ["_target", "_caller", "_actionId", "_arguments"];
             _arguments params ["_pKey", "_pName"];
-            [_target, _caller, _actionId, ["PLATOON_SERGEANT", _pName]] call FTCS_fnc_openSubordinateMenu;
+            ["FTCS_MENU_SquadHub"] call FTCS_fnc_menuOpen;
         },
         [_platoonKey, _pltName], 2.1, 20.0, "cursorObject == _target"
     ] call FTCS_fnc_addEngineAction;
@@ -163,7 +162,7 @@ private _fnc_addPlatoonSergeantActions = {
         "<t color='#FFAA00'>[Phase] Transition Operational Phase</t>",
         { 
             params ["_target", "_caller", "_actionId"];
-            [_target, _caller, _actionId, ["PHASE_TRANSITION", "Operational Phase"]] call FTCS_fnc_openSubordinateMenu;
+            ["FTCS_MENU_Phase"] call FTCS_fnc_menuOpen;
         },
         [], 2.0, 20.0, "cursorObject == _target"
     ] call FTCS_fnc_addEngineAction;
@@ -193,7 +192,7 @@ private _fnc_addPlatoonSergeantActions = {
                     {
                         params ["_target", "_caller", "_actionId", "_arguments"];
                         _arguments params ["_targetSqdKey", "_targetSqdName"];
-                        [_target, _caller, _actionId, ["SQUAD", _targetSqdName]] call FTCS_fnc_openSubordinateMenu;
+                        ["FTCS_MENU_SquadHub"] call FTCS_fnc_menuOpen;
                     },
                     [_sqdKey, _sqdName],
                     _actionPriority,
@@ -231,7 +230,7 @@ private _fnc_addPlatoonHQActions = {
         { 
             params ["_target", "_caller", "_actionId", "_arguments"];
             _arguments params ["_pKey", "_pName"];
-            [_target, _caller, _actionId, ["PLATOON", _pName]] call FTCS_fnc_openSubordinateMenu;
+            ["FTCS_MENU_SquadHub"] call FTCS_fnc_menuOpen;
         },
         [_platoonKey, _pltName], 2.0, 60.0, "cursorObject == _target"
     ] call FTCS_fnc_addEngineAction;
@@ -261,7 +260,7 @@ private _fnc_addPlatoonHQActions = {
                     {
                         params ["_target", "_caller", "_actionId", "_arguments"];
                         _arguments params ["_targetSqdKey", "_targetSqdName"];
-                        [_target, _caller, _actionId, ["SQUAD", _targetSqdName]] call FTCS_fnc_openSubordinateMenu;
+                        ["FTCS_MENU_SquadHub"] call FTCS_fnc_menuOpen;
                     },
                     [_sqdKey, _sqdName],
                     _actionPriority,
@@ -290,7 +289,7 @@ private _fnc_addSpecialAction = {
                 "<t color='#FF4500'>[Radio Net] Field Radio Comms</t>",
                 { 
                     params ["_target", "_caller", "_actionId"];
-                    [_target, _caller, _actionId, ["RADIO", "Field Radio Net"]] call FTCS_fnc_openSubordinateMenu;
+                    ["FTCS_MENU_SquadHub"] call FTCS_fnc_menuOpen;
                 },
                 [], 1.8, 5.0, "cursorObject == _target"
             ] call FTCS_fnc_addEngineAction;
@@ -301,7 +300,7 @@ private _fnc_addSpecialAction = {
                 "<t color='#00FF00'>[Medical] Triage & CCP</t>",
                 { 
                     params ["_target", "_caller", "_actionId"];
-                    [_target, _caller, _actionId, ["MEDIC", "Combat Medic"]] call FTCS_fnc_openSubordinateMenu;
+                    ["FTCS_MENU_SquadHub"] call FTCS_fnc_menuOpen;
                 },
                 [], 1.8, 5.0, "cursorObject == _target"
             ] call FTCS_fnc_addEngineAction;
@@ -312,7 +311,7 @@ private _fnc_addSpecialAction = {
                 "<t color='#D2B48C'>[Dispatch] Send Runner with Orders</t>",
                 { 
                     params ["_target", "_caller", "_actionId"];
-                    [_target, _caller, _actionId, ["RUNNER", "HQ Runner"]] call FTCS_fnc_openSubordinateMenu;
+                    ["FTCS_MENU_SquadHub"] call FTCS_fnc_menuOpen;
                 },
                 [], 1.8, 5.0, "cursorObject == _target"
             ] call FTCS_fnc_addEngineAction;
@@ -404,7 +403,7 @@ if (count _assignedRoles > 0) then {
             "<t color='#00FFCC'>[Company Orders] General Directives</t>",
             {
                 params ["_target", "_caller", "_actionId"];
-                [_target, _caller, _actionId, ["COMPANY_GENERAL", "Full Company"]] call FTCS_fnc_openSubordinateMenu;
+                ["FTCS_MENU_SquadHub"] call FTCS_fnc_menuOpen;
             },
             [],
             1.2,
@@ -417,53 +416,11 @@ if (count _assignedRoles > 0) then {
         };
     };
 
-    // If player is a Platoon Commander, register Platoon Formation self-actions directly on the Lieutenant
-    // >>> PLAYER SELF-ACTION POINT <<< - the ONLY action registered on the player:
-    // "[Platoon Orders] Command Net", with NO visibility restriction (always shown).
-    // SUSPENDED player actions (restore by uncommenting + re-adding conditions):
-    //   - "[Operational Phase] Set Doctrinal Phase"  (PHASE_TRANSITION)
-    //   - "[Planning] Platoon TLP & Mission Prep"    (TLP_PLANNING)
-    if (_playerRole == "PLATOON_COMMANDER") then {
-        private _pltLeaderAction = [
-            player,
-            "<t color='#00FFCC'>[Platoon Orders] Command Net (Radio / Voice)</t>",
-            {
-                params ["_target", "_caller", "_actionId"];
-                private _pKey = format ["PLT_%1", missionNamespace getVariable ["FTCS_Player_Platoon_ID", 1]];
-                [_target, _caller, _actionId, ["PLATOON_SERGEANT", format ["Platoon Leader (%1)", _pKey]]] call FTCS_fnc_openSubordinateMenu;
-            },
-            [],
-            1.5,
-            0.0,
-            "true"   // no visibility restriction: always available on the player
-        ] call FTCS_fnc_addEngineAction;
-
-        private _phaseAction = [
-            player,
-            "<t color='#FFAA00'>[Operational Phase] Set Doctrinal Phase</t>",
-            {
-                params ["_target", "_caller", "_actionId"];
-                [_target, _caller, _actionId, ["PHASE_TRANSITION", "Operational Phase"]] call FTCS_fnc_openSubordinateMenu;
-            },
-            [],
-            1.4,
-            0.0,
-            "false"  // SUSPENDED: single-action-only design (see header comment)
-        ] call FTCS_fnc_addEngineAction;
-
-        private _tlpAction = [
-            player,
-            "<t color='#E0BB20'>[Planning] Platoon TLP & Mission Prep</t>",
-            {
-                params ["_target", "_caller", "_actionId"];
-                [_target, _caller, _actionId, ["TLP_PLANNING", "Pre-Mission TLP"]] call FTCS_fnc_openSubordinateMenu;
-            },
-            [],
-            1.3,
-            0.0,
-            "false"  // SUSPENDED: single-action-only design (see header comment)
-        ] call FTCS_fnc_addEngineAction;
-    };
+    // PLAYER SELF-ACTION NOTE: the player commanding UI is registered ONLY by
+    // fn_initMenus ("[FTCS] Command Menu (Wheel)"). The legacy "[Platoon Orders]
+    // Command Net (Radio / Voice)" self-action block that used to live here was
+    // removed: it duplicated the same menuOpen entry point from the retired
+    // menu system and produced a second, confusing entry on the action wheel.
 };
 
 // 2. Process Tactical Platoons and Squads (Filtered by player command scope)
@@ -566,7 +523,7 @@ if (!(missionNamespace getVariable ["FTCS_NPC_ACTIONS_ENABLED", false])) exitWit
                             {
                                 params ["_target", "_caller", "_actionId", "_arguments"];
                                 _arguments params ["_sName"];
-                                [_target, _caller, _actionId, ["SQUAD", _sName]] call FTCS_fnc_openSubordinateMenu;
+                                ["FTCS_MENU_SquadHub"] call FTCS_fnc_menuOpen;
                             },
                             [_sqdName],
                             2.0,
@@ -613,7 +570,7 @@ if (!(missionNamespace getVariable ["FTCS_NPC_ACTIONS_ENABLED", false])) exitWit
                                 {
                                     params ["_target", "_caller", "_actionId", "_arguments"];
                                     _arguments params ["_tName"];
-                                    [_target, _caller, _actionId, ["TEAM", _tName]] call FTCS_fnc_openSubordinateMenu;
+                                    ["FTCS_MENU_SquadHub"] call FTCS_fnc_menuOpen;
                                 },
                                 [_teamName],
                                 1.8,

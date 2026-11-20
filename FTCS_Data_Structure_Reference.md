@@ -89,8 +89,33 @@ missionNamespace
 │                                        registro en FTCS_Groups_Registry_Table: trailOffsetDist / trailTargetPos /
 │                                        trailTangentDir / movingMode "FOLLOWING_TRAIL")
 ├── FTCS_Trail_Gen_PLT_1 .. 4          (NUMBER: Generación de trail column — cada orden nueva invalida hilos previos)
-└── FTCS_Debug_Mode                 (BOOLEAN: Centinela de depuración, true para telemetría visual y slots en mapa)
+├── FTCS_Debug_Mode                 (BOOLEAN: Centinela de depuración, true para telemetría visual y slots en mapa)
+└── FTCS_Debug_Menu_Mode            (BOOLEAN: Centinela de la capa de menús — elige árbol DEBUG vs REAL y activa el vuelco
+                                      de estado y despachos al RPT. Se lee UNA vez al arrancar; no se alterna en partida)
 ```
+
+### 1-bis. CENTINELAS DE ESTADO DE MENÚS (Política obligatoria — Punto 0, Regla 20)
+
+La decisión de enabled/disabled/visible de cualquier fila o submenú se toma EXCLUSIVAMENTE
+contra los campos catalogados a continuación. PROHIBIDO que la capa de menús inspeccione
+estado interno de funciones (anclas de geometría, hilos spawn, variables private, markers).
+El código de juego ESCRIBE estos campos en el momento del cambio; los menús SOLO los leen.
+
+| Campo (fuente)                                   | Tipo     | Escritor único                          | Gates que lo consumen                  |
+|--------------------------------------------------|----------|------------------------------------------|----------------------------------------|
+| `FTCS_Platoons_Registry[plt]["movementTechnique"]` | ENUM   | dispatcher de órdenes (fn_applyCommandToTarget) | gate_compact, gate_edge_push/pull, gate_tech_* |
+| `FTCS_Platoons_Registry[plt]["orderState"]`      | ENUM     | fn_platoonHaltRejoin                     | gate_halted, gate_not_halted           |
+| `FTCS_Platoons_Registry[plt]["currentPhase"]`    | NUMBER   | fn_platoonSetOperationalPhase            | gate_march, gate_phase1/2/3            |
+| `FTCS_Groups_Registry_Table[grp]["movingMode"]`  | ENUM     | bucles de marcha / fn_squadOrderApply    | gate_squad_N, gate_not_following, gate_flank_* |
+| `FTCS_Debug_Menu_Mode`                           | BOOLEAN  | fn_registryInit (arranque)               | selector de árbol + trazas de menú     |
+
+**Valores de `movementTechnique` válidos para gates:** `CROSS_COUNTRY` (columnas no disponibles) |
+`ROAD_COLUMN` (compact + edge rows disponibles) | `TRAIL_COLUMN` (solo compact disponible).
+Cualquier valor nuevo debe pasar por la DIRECTRIZ ENUM-REGISTRY (sección 0) antes de usarse en un gate.
+
+**Regla de extensión:** si un gate futuro necesita un estado que no está en esta tabla,
+NO se lee del código interno: se añade el campo al registro con escritor único y se documenta
+aquí y en la Regla 20 del Punto 0.
 
 ---
 
