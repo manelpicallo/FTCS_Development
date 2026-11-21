@@ -20,6 +20,91 @@
 
 ---
 
+## SESIÓN 2026-11-20 (ter) — Fila 4 (Follow Mode): modo por defecto, gate y función de menú no cargada
+
+**Estado:** aplicado en disco; pendiente de validar en partida.
+
+### Diagnóstico
+
+1. El menú no cambiaba la etiqueta al ordenar una formación. La construcción de la fila
+   (`fn_menuBuild`, `dynamic = "followmode"`) es correcta: muestra siempre el modo CONTRARIO.
+   El fallo silencioso está antes: si la función `FTCS_fnc_menuGate`/`fn_menuBuild` no está
+   compilada en la sesión (CfgFunctions no recompilado), el bloque de la fila aborta SIN
+   error y la fila conserva su etiqueta ESTÁTICA del catálogo ("ABSOLUTE") y `enabled=1`.
+   Resultado observable: "sigue diciendo lo mismo y al clicar no pasa nada".
+2. El modo semilla era `REL`, no `ABS`.
+3. No existía ningún escrito del modo al ordenar una formación.
+
+### Qué se tocó
+
+1. **`fn_initMenus`**: compila los ficheros del módulo Menu al arrancar
+   (catálogo, gate, getState, build, open, dispatch, reopen) y avisa con `***` si
+   `FTCS_fnc_menuGate` sigue sin existir. La capa de menú deja de depender de que
+   `description.ext` se haya recompilado en la sesión.
+2. **`fn_menuBuild`**: si `FTCS_fnc_menuGate` no existe, lo registra con `***` en vez de
+   abortar en silencio (la fila queda blanca, pero el RPT lo dice).
+3. **Semilla `ABS`**: `fn_registryInit` y `fn_initMenus` siembran `followMode = ABS`
+   (espejo `FTCS_Platoon_Follow_Mode = FOLLOWING_COMMANDER_ABS`).
+4. **Modo de nacimiento de la formación**: bloque nuevo en `fn_applyCommandToTarget` para
+   `PLT_FORM_WEDGE/VEE/LINE/ECHELON_RIGHT/ECHELON_LEFT`: la formación **nace siempre en
+   `followMode = ABS`** (contrato doctrinal elegido por el usuario). Column/File no lo tocan.
+5. **Fila 4**: gate propio `gate_follow_mode` (líder válido + formación ordenada;
+   sin formación: gris "order a platoon formation first").
+6. **`platoonFormation` con valor explícito `NONE`**: semilla cambiada de `"COLUMN"` a
+   `"NONE"` en los 3 sitios de `fn_registryInit`, y escritor nuevo en
+   `fn_formationsApplyPlatoonOrder` (escribe la formación ordenada en cada grupo y en el
+   grupo del líder; carretera/estela y Ground Lock no la escriben). `gate_follow_mode`
+   trata `"NONE"`, `""` y `"MIXED"` como "sin formación". `fn_menuGetState` ya no re-lee el
+   registro (`_pltRegState` = `_pltReg`).
+7. Traza temporal `[FTCS][MENU][FOLLOW]` en `fn_menuOpen` (bajo `FTCS_Debug_Menu_Mode`).
+
+### Pendiente
+
+- Validar en partida: abrir menú sin formación (fila 4 gris), ordenar Vee y reabrir (fila 4
+  blanca, etiqueta RELATIVE), clicar (pasa a ABS y la etiqueta vuelve a RELATIVE/ABSOLUTE
+  según el registro). Revisar en el RPT `[FTCS][MENU][FOLLOW]` y `[FTCS][MENU][DISPATCH]`.
+- Eliminar la traza temporal `[FTCS][MENU][FOLLOW]` de `fn_menuOpen` cuando se cierre el caso.
+- Recordatorio: `platoonFormation` ya es `NONE` al arrancar, pero los consumidores que
+  esperaban `"COLUMN"` por defecto deben comprobarlo (grep de `platoonFormation`).
+
+---
+
+## SESIÓN 2026-11-20 (bis) — Follow mode y eje de avance al registro de PELOTÓN
+
+**Estado:** cambios aplicados en disco; pendiente de validación en partida.
+
+### Qué se tocó
+
+1. **Centinelas nuevos en `FTCS_Platoons_Registry[pltId]`:** `followMode` (`REL`|`ABS`),
+   `followModeFacing` (rumbo congelado ABS), `advanceDirection` (eje vivo REL),
+   `columnLayout` y `edgeMarginSteps` (sembrados a `""` / `0`). Semilla en
+   `fn_registryInit` desde los globals legacy, sin pérdida de estado al arrancar.
+2. **Escritor único** del modo: `PLT_MODE_RELATIVE` / `PLT_MODE_ABSOLUTE` en
+   `fn_applyCommandToTarget`. El resto de escritores del eje (captura de posiciones,
+   orden de formación, nacimiento de columna de carretera, REJOIN-KEEP, bucle de
+   seguimiento) escriben `advanceDirection` / `followModeFacing` vía
+   `FTCS_fnc_registrySetPlatoon`.
+3. **Lectores migrados al registro:** `fn_platoonAdvanceAxis`, `fn_formationsGroupDoFollowCommander`,
+   `fn_formationsLiveSlotsDebugWorker`, `fn_platoonHaltRejoin`, `fn_formationsApplyPlatoonOrder`,
+   `fn_formationsCurrentPositionSet`, `fn_formationsGroupFollowRoad`, las 4 rutas de
+   scouts del dispatcher, y el menú (`fn_menuGetState` + toggle de `fn_menuDispatch`).
+4. **Restos del menú retirado eliminados** de los modos REL/ABS: ya no hay
+   `showCommandingMenu "#USER:FTCS_MENU_PlatoonFormations_P1"` ni mutaciones directas
+   de ese array (podían pisar la reapertura del menú nuevo).
+5. **Globals legacy** (`FTCS_Platoon_Follow_Mode`, `FTCS_Platoon_Fixed_Abs_Dir`,
+   `FTCS_Platoon_Advance_Direction`, `FTCS_Last_Commander_Dir`) quedan como espejos
+   de solo escritura para el pipeline de despliegue. Documentado en
+   `FTCS_Data_Structure_Reference.md` (árbol + tabla 1-bis) y Lección 39.
+
+### Pendiente (acordado con el usuario)
+
+- `columnLayout` / `edgeMarginSteps` ya existen en el registro, pero **los gates de
+  menú siguen leyendo las anclas**: el paso siguiente (cuando el usuario lo pida) es
+  mover `fn_menuGetState` y `gate_layout_*` / `gate_edge_*` a estos campos.
+- `convoyMode` (embarcado / vehículos): NO se sembró (sin backend de transporte).
+
+---
+
 ## SESIÓN 2026-11-20 — Bug trail resuelto + gates al registro + política de centinelas de menú
 
 **Estado:** sesión cerrada con 4 fijaciones aplicadas y VERIFICADAS en disco (pendiente

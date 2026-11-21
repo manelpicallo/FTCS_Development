@@ -73,6 +73,7 @@
 | 31 | 2026-11-16 | Lesson | A stuck-group escape must skip ONE index, never jump to the seat: `move <seat>` is a pathfinding request, so Arma takes the shortest route and the group cuts across the track ("they overtake the whole file") | `fn_formationsGroupFollowTrail.sqf` |
 | 32 | 2026-11-16 | Lesson | A memory bound may not depend on data published by a thread that runs AFTER it: the trim/record equilibrium capped the path at ~95 pts and starved the tail. Fix: registry-side guard + batch 20 + cushion 150 (seeded value must match the default) | `fn_trailTrimToArc.sqf`, `fn_trailColumnSet.sqf`, `fn_formationsGroupFollowTrail.sqf` |
 | 33 | 2026-11-16 | Lesson | In a column compressed against the trail tip, SPACING must yield to ORDER: `frontSeat - gapIdx < 0` dropped the last group out of the column forever. Fallback = 1 index behind the car in front (logged), never HOLD | `fn_formationsTrailQueueSync.sqf` |
+| 39 | 2026-11-20 | Lesson + Arch/Design | A platoon ORDER (follow mode REL/ABS + axis) is a registry fact per platoon, not a company-wide global; platoon = ORDER, group = EXCEPTION (`movingMode`) | `fn_registryInit.sqf`, `fn_applyCommandToTarget.sqf`, `fn_formationsGroupDoFollowCommander.sqf`, `fn_platoonAdvanceAxis.sqf`, `fn_platoonHaltRejoin.sqf`, `fn_menuGetState.sqf` |
 
 ---
 
@@ -2233,7 +2234,53 @@ A class-level diff against `HEAD` afterwards showed exactly: 2 classes lost
 
 ---
 
+## Lesson 39 — A platoon ORDER is a registry fact, not a company-wide global
 
+**Date:** 2026-11-20
+**Type:** Lesson + Architecture / Design Note (direct guide for an AI)
+
+### Symptom / risk
+
+`FTCS_Platoon_Follow_Mode` (REL/ABS), `FTCS_Platoon_Fixed_Abs_Dir` and
+`FTCS_Platoon_Advance_Direction` were COMPANY-WIDE missionNamespace globals. With
+3-4 platoons (Etapa B) every platoon inherited the follow mode and axis of
+whichever platoon ordered last, and the menu could only answer "what mode is the
+platoon in?" by VOTING across groups - which is a state, not an order.
+
+### What was changed (verified on disk)
+
+New platoon registry sentinels (`FTCS_Platoons_Registry[pltId]`), seeded in
+`fn_registryInit` from the legacy globals so no state is lost at boot:
+
+| Field | Writer (single) | Readers |
+|---|---|---|
+| `followMode` REL\|ABS | `fn_applyCommandToTarget` PLT_MODE_RELATIVE/PLT_MODE_ABSOLUTE | `fn_menuGetState` (row label), `fn_menuDispatch` (toggle), `fn_platoonAdvanceAxis`, `fn_formationsCurrentPositionSet`, `fn_formationsApplyPlatoonOrder`, `fn_platoonHaltRejoin`, 4 scout paths in the dispatcher, `fn_formationsGroupDoFollowCommander` |
+| `followModeFacing` | ABS order, position capture, formation order, REJOIN-KEEP | `fn_platoonAdvanceAxis` (ABS), follow loop initial target, debug worker |
+| `advanceDirection` | follow loop (REL, live), capture, formation order, road column birth, REJOIN-KEEP | same consumers (REL) |
+
+### Two bugs found and fixed on the way
+
+1. **`fn_menuGetState` read `_pltReg` before declaring it** - `private` inside SQF
+   does not hoist values; the followMode line landed above the registry read. The
+   read was moved BELOW the declaration.
+2. **`fn_formationsGroupDoFollowCommander` split its setup into two same-mode
+   blocks** (`REL` block and `ABS` block) that each re-declared `private _relPos`
+   (Lesson 34/37 family). Merged into ONE shared `_relPos` read + two thin
+   mode blocks, which also guarantees `doFollow leader _group` runs in BOTH modes
+   exactly as before.
+
+### Invariant for the next AI
+
+- Platoon = ORDER (`followMode`, `advanceDirection`, `followModeFacing`,
+  `movementTechnique`, `columnLayout`, `edgeMarginSteps`).
+- Group = EXCEPTION (`movingMode`, `squadFormation`, `teamFormation`).
+- A group leaving the formation writes ITS `movingMode`; it NEVER touches the
+  platoon order. A menu gate that needs "what was ordered" reads the platoon
+  field; only "is this squad out of line?" reads the group field.
+- The legacy globals are write-only compatibility mirrors now. Any new READ of
+  them outside the deployment pipeline is a regression.
+
+---
 
 ## Lesson 38 — Menu gates must read REGISTER fields / sentinels, never internal code state
 **Date:** 2026-11-20

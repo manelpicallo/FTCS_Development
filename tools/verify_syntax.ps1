@@ -138,4 +138,16 @@ foreach ($f in $files) {
 
     $status = if ($ob -eq $cb -and $obr -eq $cbr -and $op -eq $cp) { "OK" } else { "MISMATCH" }
     Write-Host "$status -> $f | Braces: $ob/$cb | Brackets: $obr/$cbr | Parens: $op/$cp"
+
+    # ---- Statement terminator check: a block-closing `}` that ends an if/then/do/
+    # else statement MUST be followed by `;`. Catching this here is what the plain
+    # bracket count cannot do ("Error Missing ;" from Arma, reported one line later).
+    $lines = $c -split "`n"
+    for ($ln = 0; $ln -lt $lines.Count; $ln++) {
+        if ($lines[$ln] -notmatch '^\s*}') { continue }
+        $rest = ($lines[$ln] -replace '^\s*}', '').Trim()
+        if ($rest -eq '' -or $rest.StartsWith(';')) { continue }
+        if ($rest -match '^(else|catch|while)') { continue }
+        Write-Host "  MISSING ; after '}' -> $f line $($ln + 1): $($lines[$ln].Trim())" -ForegroundColor Yellow
+    }
 }

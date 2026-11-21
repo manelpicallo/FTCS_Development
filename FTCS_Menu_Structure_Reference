@@ -27,6 +27,18 @@ Las fases doctrinales (FM 3-21.8) se estructuran en 3 grandes etapas:
     fn_initMenus     compila el catálogo una vez + addAction única del jugador
 - El catálogo NUNCA se muta: se construye una copia nueva por apertura y se
   publica en `FTCS_MENU_<id>_Var`, que es lo único que lee el motor.
+- Modo de seguimiento REL/ABS: la fila 4 del menú raíz (`Follow Mode`) se decide
+  contra el centinela de PELOTÓN `FTCS_Platoons_Registry[plt]["followMode"]`
+  (no contra ningún global ni votando grupos). El toggle de `fn_menuDispatch`
+  lee ese mismo campo del snapshot. La fila muestra SIEMPRE el modo CONTRARIO al
+  activo (ABS -> "switch to RELATIVE") y solo es clicable cuando existe una
+  formación ordenada (`gate_follow_mode`: `platoonFormation` != `NONE`/`MIXED`);
+  sin formación va en gris con el motivo "order a platoon formation first".
+  Contrato doctrinal: **toda formación cross-country nace en ABS**; pasar a REL
+  es una orden explícita del jugador.
+- `fn_initMenus` compila los ficheros del módulo Menu (catálogo, gate, getState,
+  build, open, dispatch, reopen) al arrancar, de modo que la capa de UI no depende
+  de que `CfgFunctions` los haya compilado en la sesión en curso.
 - Retirados (código y documentación): `fn_openSubordinateMenu` y
   `fn_commandMenusRefresh` (este último ya no existía en disco).
 

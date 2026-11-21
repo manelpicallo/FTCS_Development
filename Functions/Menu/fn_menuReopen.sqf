@@ -26,9 +26,15 @@
     ================================================================================
 */
 
-if (_menuId == "") exitWith {};
-
+// NOTE: `params` must run BEFORE any use of the arguments (the old version tested
+// `_menuId` three statements above its own `params` line, which reads whatever
+// value happened to be in scope instead of the argument).
 params [["_menuId", ""], ["_squadIdx", -1]];
+
+if (!(_menuId isEqualType "")) then { _menuId = ""; };
+if (!(_squadIdx isEqualType 0)) then { _squadIdx = -1; };
+
+if (_menuId == "") exitWith {};
 
 private _display = findDisplay 46;
 if (isNull _display) exitWith {

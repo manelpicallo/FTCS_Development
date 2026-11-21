@@ -880,12 +880,11 @@ private _list = [];
             };
         };
 
-        // Persist the resolved formation type into the squad leader group registry entry
-        // platoonFormation: the macro slot formation this element occupies in the
-        // platoon deployment (sole writer: platoon pipeline). Doctrine ladder:
+        // platoonFormation is deliberately NOT written here: this geometry pass also
+        // runs for callers that are not a formation order (Ground Lock, capture). The
+        // only writer is fn_formationsApplyPlatoonOrder, the function that knows a
+        // formation was ORDERED. Doctrine ladder:
         // companyFormation (future) / platoonFormation / squadFormation / teamFormation.
-        _entry set ["platoonFormation", _type_formation];
-        FTCS_Groups_Registry_Table set [_elementID, _entry];
 
         // Update 2D tactical map NATO icon text to display assigned formation slot (0-12)
         private _grpObj = (_x select 0);

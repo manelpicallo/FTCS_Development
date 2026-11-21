@@ -238,7 +238,7 @@ while {((_group getVariable ["FTCS_FollowThread_ID", -1]) == _threadID) &&
         private _anchor = missionNamespace getVariable [format ["FTCS_Road_Anchor_PLT_%1", _pltIdFor], createHashMap];
         private _stopPath = _anchor getOrDefault ["roadPath", []];
         private _headDist = _anchor getOrDefault ["headDist", 0];
-        private _roadAdvanceDir = _anchor getOrDefault ["advanceDir", missionNamespace getVariable ["FTCS_Platoon_Advance_Direction", _curLeaderDir]];
+        private _roadAdvanceDir = _anchor getOrDefault ["advanceDir", [_pltIdFor, "advanceDirection", _curLeaderDir] call FTCS_fnc_registryGetPlatoon];
         private _stopTargetPos = [0, 0, 0];
         private _stopTangentDir = _roadAdvanceDir;
 

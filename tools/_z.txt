@@ -1,0 +1,40 @@
+﻿20:52:50 "[FTCS][MENU][FOLLOW] root='FTCS_MENU_Root' debugMenus=true registryFollowMode='ABS' row4 label='4. Follow Mode: RELATIVE (Turn with Leader)' token='['PLT:MODE_RELATIVE'] call FTCS_fnc_menuDispatch;'"
+20:52:51 "[FTCS][MENU][DISPATCH] token='PLT:MODE_RELATIVE' -> code='PLT_MODE_RELATIVE' squad=-"
+20:52:51 "[FTCS][MENU][REOPEN] armed for 'FTCS_MENU_Root' (idx=0)."
+20:53:25 No speaker given for 'Othmar Schieber'
+20:53:25 [CBA] (xeh) INFO: missionNamespace processed [false]
+20:53:25 [CBA] (xeh) INFO: [227589,11782.8,0] PreInit started. v3.19.0.260808
+20:53:25 [CBA] (settings) INFO: Reading settings from settings file.
+20:53:25 [CBA] (settings) INFO: Finished reading settings from settings file.
+20:53:25 [ACE] (common) INFO: Parsed Settings Configs [0.0 ms]
+20:53:25 [CBA] (xeh) WARNING: One or more children of class All do not support Extended Event Handlers. Fall back to loop.
+20:53:25 [CBA] (xeh) INFO: [227589,11783.3,0] PreInit finished.
+20:53:34 Shutdown normally
+20:53:37 SimulWeather - Cloud Renderer - noise texture file is not specified!
+20:53:38 Deinitialized shape [Class: "C_Soldier_VR_F"; Shape: "a3\characters_f_bootcamp\common\vr_soldier_f.p3d";]
+20:53:38 Deinitialized shape [Class: "SPE_Underwear_Indep"; Shape: "ww2\spe_assets_m\characters\civilians_m\civilians\spe_unteregen.p3d";]
+20:53:38 Deinitialized shape [Class: "SPE_US_AB_M42_padded_gas_506"; Shape: "ww2\spe_assets_m\characters\americans_u1_m\us_airborne\spe_us_m42_padoru_506.p3d";]
+20:53:38 Deinitialized shape [Class: "SPE_US_AB_M42_padded_CC2_506"; Shape: "ww2\spe_assets_m\characters\americans_u1_m\us_airborne\spe_us_m42_padoru_506.p3d";]
+20:53:38 Deinitialized shape [Class: "SPE_US_AB_M42_padded_gas_medic"; Shape: "ww2\spe_assets_m\characters\americans_u1_m\us_airborne\spe_us_m42_padoru_pfak.p3d";]
+20:53:38 Deinitialized shape [Class: "SPE_US_AB_M42_padded_CC2_roll"; Shape: "ww2\spe_assets_m\characters\americans_u1_m\us_airborne\spe_us_m42_padoru_roll.p3d";]
+20:53:38 Deinitialized shape [Class: "SPE_US_AB_M42_padded_CC2_glove"; Shape: "ww2\spe_assets_m\characters\americans_u1_m\us_airborne\spe_us_m42_padoru_glove.p3d";]
+20:53:38 Deinitialized shape [Class: "SPE_US_AB_M42_padded_CC2_506_knife"; Shape: "ww2\spe_assets_m\characters\americans_u1_m\us_airborne\spe_us_m42_padoru_506_knife.p3d";]
+20:53:38 Deinitialized shape [Class: "SPE_US_AB_M42_padded_CC2_roll_knife"; Shape: "ww2\spe_assets_m\characters\americans_u1_m\us_airborne\spe_us_m42_padoru_roll_knife.p3d";]
+20:53:38 Deinitialized shape [Class: "SPE_US_AB_M42_padded_gas_glove_knife"; Shape: "ww2\spe_assets_m\characters\americans_u1_m\us_airborne\spe_us_m42_padoru_glove_knife.p3d";]
+20:53:38 Deinitialized shape [Class: "SPE_US_AB_M42_padded_CC2_glove_knife"; Shape: "ww2\spe_assets_m\characters\americans_u1_m\us_airborne\spe_us_m42_padoru_glove_knife.p3d";]
+20:53:38 Deinitialized shape [Class: "SPE_US_101AB_CO"; Shape: "ww2\spe_assets_m\characters\americans_u1_m\us_airborne\spe_us_m42.p3d";]
+20:53:38 Deinitialized shape [Class: "SPE_US_101AB_SquadLead"; Shape: "ww2\spe_assets_m\characters\americans_u1_m\us_airborne\spe_us_m42.p3d";]
+20:53:38 Deinitialized shape [Class: "SPE_US_101AB_radioman"; Shape: "ww2\spe_assets_m\characters\americans_u1_m\us_airborne\spe_us_m42.p3d";]
+20:53:38 Deinitialized shape [Class: "SPE_US_101AB_rifleman"; Shape: "ww2\spe_assets_m\characters\americans_u1_m\us_airborne\spe_us_m42.p3d";]
+20:53:38 Deinitialized shape [Class: "SPE_US_101AB_medic"; Shape: "ww2\spe_assets_m\characters\americans_u1_m\us_airborne\spe_us_m42.p3d";]
+20:53:38 Deinitialized shape [Class: "SPE_US_101AB_mgunner"; Shape: "ww2\spe_assets_m\characters\americans_u1_m\us_airborne\spe_us_m42.p3d";]
+20:53:38 Deinitialized shape [Class: "SPE_US_101AB_mgunner_assistant"; Shape: "ww2\spe_assets_m\characters\americans_u1_m\us_airborne\spe_us_m42.p3d";]
+20:53:38 Deinitialized shape [Class: "SPE_US_101AB_Rifleman_AmmoBearer"; Shape: "ww2\spe_assets_m\characters\americans_u1_m\us_airborne\spe_us_m42.p3d";]
+20:53:38 Deinitialized shape [Class: "SPE_US_101AB_grenadier"; Shape: "ww2\spe_assets_m\characters\americans_u1_m\us_airborne\spe_us_m42.p3d";]
+20:53:38 Deinitialized shape [Class: "SPE_US_101AB_Mortar_Gunner"; Shape: "ww2\spe_assets_m\characters\americans_u1_m\us_airborne\spe_us_m42.p3d";]
+20:53:38 Deinitialized shape [Class: "SPE_US_101AB_Mortar_AGunner"; Shape: "ww2\spe_assets_m\characters\americans_u1_m\us_airborne\spe_us_m42.p3d";]
+20:53:38 Deinitialized shape [Class: "SPE_US_101AB_Mortar_AmmoBearer"; Shape: "ww2\spe_assets_m\characters\americans_u1_m\us_airborne\spe_us_m42.p3d";]
+20:53:38 Deinitialized shape [Class: "SPE_US_101AB_Assist_SquadLead"; Shape: "ww2\spe_assets_m\characters\americans_u1_m\us_airborne\spe_us_m42.p3d";]
+20:53:38 Deinitialized shape [Class: "SPE_US_AB_M42_padded_gas_knife"; Shape: "ww2\spe_assets_m\characters\americans_u1_m\us_airborne\spe_us_m42_padoru_knife.p3d";]
+20:53:38 Deinitialized shape [Class: "SPE_GER_stggunner"; Shape: "ww2\spe_assets_m\characters\germans_m\ger_wehrmacht\spe_de_m43.p3d";]
+20:53:38 Deinitialized shape [Class: "SPE_GER_Soldier_Oberschutze_Boots"; Shape: "ww2\spe_assets_m\characters\germans_m\ger_wehrmacht\spe_de_m43_op.p3d";]

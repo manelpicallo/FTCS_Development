@@ -10,10 +10,13 @@
                  semantics and fn_mvFormationShift's heading model):
                      1. Road march column active (road anchor has a path) ->
                         anchor advanceDir (road-aligned axis).
-                     2. ABS follow mode -> frozen compass lock
-                        FTCS_Platoon_Fixed_Abs_Dir.
-                     3. REL (default) -> live platoon advance direction
-                        FTCS_Platoon_Advance_Direction.
+                     2. ABS follow mode -> the platoon registry sentinel
+                        "followModeFacing" (frozen compass lock).
+                     3. REL (default) -> the platoon registry sentinel
+                        "advanceDirection" (live axis, written by the follow loop).
+                     Both follow-mode sentinels live in
+                     FTCS_Platoons_Registry[pltId] (Point 0 Rule 20), so the axis
+                     is resolved PER PLATOON and never from a company-wide global.
                      Fallback in every branch: the reference leader's getDir.
                  Params:
                      0: OBJECT - OPTIONAL reference leader (default: the platoon
@@ -42,10 +45,12 @@ if (count (_roadAnchor getOrDefault ["roadPath", []]) >= 2) exitWith {
 };
 
 // 2. ABS follow mode -> frozen compass lock
-private _followMode = missionNamespace getVariable ["FTCS_Platoon_Follow_Mode", "FOLLOWING_COMMANDER_REL"];
-if (_followMode == "FOLLOWING_COMMANDER_ABS") exitWith {
-    missionNamespace getVariable ["FTCS_Platoon_Fixed_Abs_Dir", _fallbackDir]
+// Both sentinels come from the PLATOON REGISTRY (Rule 20): the follow mode and
+// the axis are facts of THIS platoon, not company-wide globals.
+private _followMode = [_pltId, "followMode", "REL"] call FTCS_fnc_registryGetPlatoon;
+if (_followMode == "ABS") exitWith {
+    [_pltId, "followModeFacing", _fallbackDir] call FTCS_fnc_registryGetPlatoon
 };
 
 // 3. REL (default) -> live platoon advance direction
-missionNamespace getVariable ["FTCS_Platoon_Advance_Direction", _fallbackDir]
+[_pltId, "advanceDirection", _fallbackDir] call FTCS_fnc_registryGetPlatoon

@@ -29,6 +29,24 @@ params [
     ["_squadIdx", 0]
 ];
 
+// Hard contract: see the note before `_squads` below. A wrong-typed state must
+// NEVER reach a getOrDefault ("Type Array, expected HashMap" killed the whole UI).
+// The MENU ID is also normalised first: the RPT (20:49:24, line 38) showed
+// "Error ==: Type HashMap" caused by `_menuId` arriving as a HashMap, i.e. a caller
+// passing (state, menuId, ...) instead of (menuId, state, ...).
+if (!(_menuId isEqualType "")) then {
+    if ((_menuId isEqualType createHashMap) && { _state isEqualType "" }) then {
+        private _swapId = _menuId;
+        _menuId = _state;
+        _state = _swapId;
+    } else {
+        _menuId = "";
+    };
+};
+if (!(_state isEqualType createHashMap)) then {
+    _state = missionNamespace getVariable ["FTCS_Menu_LastState", createHashMap];
+};
+
 if (_menuId == "" || { !(_state isEqualType createHashMap) }) exitWith { [] };
 
 // -----------------------------------------------------------------------------
@@ -62,6 +80,14 @@ if (!(_source isEqualType []) || { count _source < 2 }) exitWith {
     []
 };
 
+// Hard contract: this builder is called from spawned script threads, and a script
+// block without parameters receives the LAST EXPRESSION of the enclosing function
+// as its "_this" (an Array will arrive here where the snapshot belongs). Never
+// trust the shape: fall back to the live snapshot, then to an empty map.
+if (!(_state isEqualType createHashMap)) then {
+    _state = missionNamespace getVariable ["FTCS_Menu_LastState", createHashMap];
+};
+if (!(_state isEqualType createHashMap)) then { _state = createHashMap; };
 private _squads = _state getOrDefault ["squads", []];
 private _squadRec = createHashMap;
 if (_squadIdx > 0) then {
@@ -122,10 +148,37 @@ private _gateResult = [];
         _row set [2, _submenu];
         _row set [4, _events];
 
+        // --- NAVIGATION rows: engine navigation, GATED target ----------------
+        // Arma ONLY keeps a commanding menu alive when the clicked row has a
+        // NON-EMPTY `submenu` field (position 2): that is what makes it a
+        // navigation row. Moving the child id into `events` and clearing
+        // `submenu` turned every child row into a TERMINAL order - Arma ran the
+        // expression and closed the menu, so the child menu opened and vanished
+        // instantly (the regression this block now prevents).
+        //
+        // What IS changed: the target is not the raw catalog variable any more,
+        // it is the BUILT copy published by fn_menuOpen ("..._Var"). Opening that
+        // name goes through the engine, keeps the menu alive AND paints rows that
+        // already passed fn_menuGate (so grey/white is decided by the gate, never
+        // by a static "0" in the catalog). The catalog variable itself is left
+        // untouched: it stays pure data.
+        if ((_kind find "nav:") == 0) then {
+            private _navId = _kind select [4];
+            if (_navId find "%1" >= 0) then { _navId = format [_navId, _squadIdx]; };
+            _row set [2, format ["#USER:FTCS_MENU_%1_Var", _navId]];
+        };
+
         // --- dynamic label injection ---------------------------------------
+        // The follow mode sentinel lives in the platoon registry and is an ENUM
+        // "REL" | "ABS" (fn_menuGetState publishes it as "followMode"). The row
+        // offers the OPPOSITE mode: ABS -> "Follow Mode: RELATIVE", REL ->
+        // "Follow Mode: ABSOLUTE". Comparing against the legacy group-mode strings
+        // ("FOLLOWING_COMMANDER_REL") made every case fall into the else branch and
+        // the row kept offering RELATIVE even when the platoon was already in REL.
         if (_kind == "followmode") then {
-            private _follow = _state getOrDefault ["followMode", "FOLLOWING_COMMANDER_REL"];
-            if (_follow == "FOLLOWING_COMMANDER_REL") then {
+            private _follow = _state getOrDefault ["followMode", "ABS"];
+            if (!(_follow isEqualType "")) then { _follow = "ABS"; };
+            if (_follow == "REL") then {
                 _row set [0, "4. Follow Mode: ABSOLUTE (Fixed Compass)"];
                 _meta set [0, "PLT:MODE_ABSOLUTE"];
             } else {
@@ -175,7 +228,16 @@ private _gateResult = [];
         if (_gate == "") then {
             _gateResult = [true, ""];
         } else {
-            _gateResult = [_gate, _state, _squadRec] call FTCS_fnc_menuGate;
+            // A missing gate FUNCTION (menu module not compiled in this session)
+            // would abort this block silently: the row would keep the catalog's
+            // enabled=1 and its static label, i.e. "the menu never changes". Log it
+            // as a real failure and fail OPEN instead.
+            if (isNil "FTCS_fnc_menuGate") then {
+                diag_log format ["[FTCS][MENU] *** BUILD: FTCS_fnc_menuGate is undefined - row '%1' left enabled.", _row select 0];
+                _gateResult = [true, ""];
+            } else {
+                _gateResult = [_gate, _state, _squadRec] call FTCS_fnc_menuGate;
+            };
         };
         _row set [6, if (_gateResult select 0) then { "1" } else { "0" }];
 
@@ -208,7 +270,10 @@ if (_menuId == "FTCS_MENU_SquadHub") then {
         _enabled = if (_gateResult select 0) then { "1" } else { "0" };
         _reason = _gateResult select 1;
         if (_enabled == "0" && { _reason != "" }) then { _label = format ["%1   [%2]", _label, _reason]; };
-        _sub = format ["#USER:FTCS_MENU_SquadOrders_%1", _slot];
+        // Squad rows are navigation rows too: the target is the BUILT copy of the
+        // squad submenu, so the engine keeps the menu open and the rows arrive
+        // already gated (same contract as the catalog navigation rows).
+        _sub = format ["#USER:FTCS_MENU_SquadOrders_%1_Var", _slot];
         _head pushBack [_label, [_n + 2], _sub, -5, [["expression", ""]], "1", _enabled, ["", "", false, ""]];
     } forEach _squads;
     _rows = _head;

@@ -322,8 +322,11 @@ _platoonsMap set [_pltKey, _pltData];
 // (legacy FTCS_Platoon_Formation_Type global removed: the platoon-level formation
 // lives exclusively in the registry field "platoonFormation" per group)
 
-// Set platoon advance direction strictly to the leader's current heading at the moment the formation order is issued
+// Set platoon advance direction strictly to the leader's current heading at the moment the formation order is issued.
+// Registry sentinels first (Rule 20); legacy globals kept in sync for the deployment pipeline.
 private _advanceDir = getDir _platoonLeaderUnit;
+[_pltIdx, "followModeFacing", _advanceDir] call FTCS_fnc_registrySetPlatoon;
+[_pltIdx, "advanceDirection", _advanceDir] call FTCS_fnc_registrySetPlatoon;
 missionNamespace setVariable ["FTCS_Platoon_Fixed_Abs_Dir", _advanceDir];
 missionNamespace setVariable ["FTCS_Platoon_Advance_Direction", _advanceDir];
 missionNamespace setVariable ["FTCS_Last_Commander_Dir", _advanceDir];
@@ -370,6 +373,21 @@ if (!isNull _leaderGroup) then {
 // and recursively calls FTCS_fnc_formationsTypeSquadSet for internal squad teams
 private _followerGroups = [_formationElements, _formationType, _separationDistance, _squadFormationsOverride] call FTCS_fnc_formationsTypePlatoonSet;
 
+// Register the ORDERED platoon formation per group (Rule 20). This is the writer of
+// the "platoonFormation" sentinel, and it is the only evidence that a formation
+// was actually ordered: fn_registryInit seeds "NONE", so a group still at "NONE"
+// has never received a formation order (the follow-mode row uses it to grey out).
+// Road/trail columns keep their own geometry and do NOT write this field.
+{
+    private _fmtGrp = _x;
+    if (!isNull _fmtGrp) then {
+        [_fmtGrp, "platoonFormation", _formationType] call FTCS_fnc_registrySet;
+    };
+} forEach _allSubordinateGroups;
+if (!isNull _leaderGroup) then {
+    [_leaderGroup, "platoonFormation", _formationType] call FTCS_fnc_registrySet;
+};
+
 // Default AI configuration for every cross-country formation order, mirroring the
 // road march entry pattern: stance ("Copy My Stance") plus doctrinal awareness,
 // speed and ROE per operational phase, applied through the standardized group
@@ -410,7 +428,8 @@ missionNamespace setVariable [format ["FTCS_March_Watchdog_Gen_PLT_%1", _pltIdx]
 
 // 6. Launch concurrent follow-commander movement threads for all subordinate groups
 if (count _allSubordinateGroups > 0) then {
-    private _followMode = missionNamespace getVariable ["FTCS_Platoon_Follow_Mode", "FOLLOWING_COMMANDER_REL"];
+    private _pltFollowRaw = [_pltIdx, "followMode", "REL"] call FTCS_fnc_registryGetPlatoon;
+    private _followMode = if (_pltFollowRaw == "ABS") then { "FOLLOWING_COMMANDER_ABS" } else { "FOLLOWING_COMMANDER_REL" };
     [_allSubordinateGroups, _followMode] spawn FTCS_fnc_formationsGroupListFollowCommander;
     systemChat format ["[PLATOON DIRECTIVE] %1 deployed into %2 formation (Heading %3°). Moving to positions...", _pltData getOrDefault ["name", _pltKey], _formationType, round _advanceDir];
 };

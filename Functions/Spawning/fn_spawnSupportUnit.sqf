@@ -178,7 +178,7 @@ private _spawnedVehicles = [];
             ["speed", "NORMAL"],
             ["roe", "FIRE_IF_FIRED_UPON"],
             ["task", "AT_WILL"],
-            ["platoonFormation", "COLUMN"],
+            ["platoonFormation", "NONE"],
             ["allocationSlot", -1],
             ["formationPosition", [-1, -1, FTCS_Group_Commander]],
             ["relPosition", [-1, -1, FTCS_Group_Commander]]

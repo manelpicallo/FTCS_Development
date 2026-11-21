@@ -38,7 +38,12 @@
 
 params [["_commandCode", ""]];
 
-if (_commandCode == "") exitWith {};
+// Hard argument contract: this script is used as a code value (spawn / event
+// handlers), where "_this" can be the previous expression's value. A non-string
+// command code must never reach the splitString/setFormation switch below.
+if (!(_commandCode isEqualType "")) then { _commandCode = ""; };
+
+if (_commandCode == "") exitWith { diag_log "[FTCS][ORDER] *** ABORT: empty/non-string command code." };
 
 private _targetUnit = missionNamespace getVariable ["FTCS_ActiveMenu_Target", objNull];
 private _targetGroup = if (!isNull _targetUnit) then { group _targetUnit } else { grpNull };
@@ -344,17 +349,45 @@ switch (_commandCode) do {
         systemChat format ["[PLATOON ORDER] %1", if (_okR) then {format ["REJOIN (%1) - squads converging on the lieutenant.", ["KEEP_FACING", "NEW_FACING"] select _facingMode]} else {"REJOIN refused (platoon must be HALTED)."}];
     };
 
+    // =========================================================================
+    // PLATOON FORMATION ORDER - born ABSOLUTE (fixed compass)
+    // =========================================================================
+    // A cross-country formation is the ONLY world where REL/ABS matters, and its
+    // DOCTRINE is: a formation marches on a FIXED compass bearing. REL (turning
+    // with the leader) is an explicit order the lieutenant gives through root row
+    // 4, never a leftover state.
+    // So the formation order itself registers followMode = "ABS" here (Rule 20);
+    // fn_formationsApplyPlatoonOrder then locks the compass on the leader's heading.
+    // Root row 4 reads this sentinel, so its label flips to "RELATIVE" as soon as
+    // the formation is ordered. Column/File (road/trail) are NOT touched: they are
+    // march gateways, not cross-country formations.
+    case "PLT_FORM_WEDGE";
+    case "PLT_FORM_VEE";
+    case "PLT_FORM_LINE";
+    case "PLT_FORM_ECHELON_RIGHT";
+    case "PLT_FORM_ECHELON_LEFT": {
+        private _fmtId = missionNamespace getVariable ["FTCS_Player_Platoon_ID", 1];
+        [_fmtId, "followMode", "ABS"] call FTCS_fnc_registrySetPlatoon;
+        if (missionNamespace getVariable ["FTCS_Debug_Menu_Mode", false]) then {
+            diag_log format ["[FTCS][MENU][FOLLOW] formation '%1' born ABS", _commandCode];
+        };
+    };
+
     case "PLT_MODE_RELATIVE": {
+        // SINGLE WRITER of the platoon follow-mode order (Rule 20): the registry
+        // sentinel is the truth; the legacy global is refreshed for any boot-time
+        // reader that still expects it.
+        private _pltModeId = missionNamespace getVariable ["FTCS_Player_Platoon_ID", 1];
+        [_pltModeId, "followMode", "REL"] call FTCS_fnc_registrySetPlatoon;
         missionNamespace setVariable ["FTCS_Platoon_Follow_Mode", "FOLLOWING_COMMANDER_REL"];
         // Refresh the relative reference heading with the leader's CURRENT heading:
-        // switching from ABS leaves FTCS_Platoon_Advance_Direction frozen at the old
-        // absolute lock, which makes RELATIVE targets behave like fixed-compass ones
-        // until the leader moves. Re-baseline the direction at mode switch time.
+        // switching from ABS leaves the axis frozen at the old absolute lock, which
+        // makes RELATIVE targets behave like fixed-compass ones until the leader
+        // moves. Re-baseline the direction at mode switch time.
         private _ldrRel = call _fnc_getPlatoonLeaderUnit;
+        [_pltModeId, "advanceDirection", getDir _ldrRel] call FTCS_fnc_registrySetPlatoon;
         missionNamespace setVariable ["FTCS_Platoon_Advance_Direction", getDir _ldrRel];
         missionNamespace setVariable ["FTCS_Last_Commander_Dir", getDir _ldrRel];
-        (FTCS_MENU_PlatoonFormations_P1 select 9) set [6, "0"];
-        (FTCS_MENU_PlatoonFormations_P1 select 10) set [6, "1"];
         
         // Adopt current ground positions dynamically and engage relative follow mode
         [call _fnc_getPlatoonLeaderUnit, "FOLLOWING_COMMANDER_REL"] call FTCS_fnc_formationsCurrentPositionSet;
@@ -378,17 +411,19 @@ switch (_commandCode) do {
         [_relGroups, "FOLLOWING_COMMANDER_REL"] spawn FTCS_fnc_formationsGroupListFollowCommander;
 
         systemChat "[FOLLOW MODE] Platoon follow mode set to RELATIVE (Turn with Leader). Current ground layout locked.";
-        showCommandingMenu "#USER:FTCS_MENU_PlatoonFormations_P1";
     };
 
     case "PLT_MODE_ABSOLUTE": {
+        // SINGLE WRITER of the platoon follow-mode order (Rule 20).
+        private _pltModeId = missionNamespace getVariable ["FTCS_Player_Platoon_ID", 1];
+        [_pltModeId, "followMode", "ABS"] call FTCS_fnc_registrySetPlatoon;
         missionNamespace setVariable ["FTCS_Platoon_Follow_Mode", "FOLLOWING_COMMANDER_ABS"];
-        (FTCS_MENU_PlatoonFormations_P1 select 9) set [6, "1"];
-        (FTCS_MENU_PlatoonFormations_P1 select 10) set [6, "0"];
         
         // Ensure absolute formation heading is locked to current platoon leader heading
         private _ldr = call _fnc_getPlatoonLeaderUnit;
         private _lockDir = getDir _ldr;
+        [_pltModeId, "followModeFacing", _lockDir] call FTCS_fnc_registrySetPlatoon;
+        [_pltModeId, "advanceDirection", _lockDir] call FTCS_fnc_registrySetPlatoon;
         missionNamespace setVariable ["FTCS_Platoon_Fixed_Abs_Dir", _lockDir];
         missionNamespace setVariable ["FTCS_Platoon_Advance_Direction", _lockDir];
         missionNamespace setVariable ["FTCS_Last_Commander_Dir", _lockDir];
@@ -409,7 +444,6 @@ switch (_commandCode) do {
         [_absGroups, "FOLLOWING_COMMANDER_ABS"] spawn FTCS_fnc_formationsGroupListFollowCommander;
 
         systemChat "[FOLLOW MODE] Platoon follow mode set to ABSOLUTE (Fixed Compass). Current ground layout locked.";
-        showCommandingMenu "#USER:FTCS_MENU_PlatoonFormations_P1";
     };
 
     case "TECH_TRAVELING": {
@@ -489,7 +523,9 @@ switch (_commandCode) do {
                 (_roadPath select 0), _midIdx, (_roadPath select _midIdx), (_roadPath select ((count _roadPath) - 1))];
         };
 
-        // Set platoon advance direction from road segment orientation to guarantee stable road tracking
+        // Set platoon advance direction from road segment orientation to guarantee stable road tracking.
+        // Registry sentinel first (Rule 20), legacy global refreshed for boot-time readers.
+        [_pltId, "advanceDirection", _roadDir] call FTCS_fnc_registrySetPlatoon;
         missionNamespace setVariable ["FTCS_Platoon_Advance_Direction", _roadDir];
         missionNamespace setVariable ["FTCS_Last_Commander_Dir", _roadDir];
 
@@ -755,18 +791,28 @@ switch (_commandCode) do {
             };
         } forEach FTCS_Groups_Registry_Table;
 
+        // TRAIL COLUMN (Follow My Track) is a MARCH WORLD, not just geometry: the
+        // order is registered BEFORE the chaining is attempted (Point 0 Rule 20).
+        // When the chaining succeeds this is the final value; when it fails the
+        // abort below resets it to CROSS_COUNTRY, so the registry NEVER claims a
+        // trail column that does not exist (that stale write was why the Compact
+        // row stayed grey after ordering the trail).
+        [_pltIdT, "movementTechnique", "TRAIL_COLUMN"] call FTCS_fnc_registrySetPlatoon;
+
         // Freeze the trail anchor and assign chained offsets
         private _chainedCount = [_pltIdT, _trailGroups, _ldrT] call FTCS_fnc_trailColumnSet;
         if (_chainedCount == 0) exitWith {
+            // No column was formed: restore the open cross-country state so the
+            // menu (gate_compact, moveTech) reports the truth.
+            [_pltIdT, "movementTechnique", "CROSS_COUNTRY"] call FTCS_fnc_registrySetPlatoon;
             hint parseText "<t color='#FF5555'>[TRAIL COLUMN FAILED]</t><br/>No subordinate groups resolved for chaining.";
             systemChat "[TRAIL COLUMN] Error: no subordinate groups found.";
         };
 
         private _anchorT = missionNamespace getVariable [format ["FTCS_Trail_Anchor_PLT_%1", _pltIdT], createHashMap];
 
-        // Persist in the platoon data-driven model
-        // PHASE 3: registry-first writes through the platoon accessor
-        [_pltIdT, "movementTechnique", "TRAIL_COLUMN"] call FTCS_fnc_registrySetPlatoon;
+        // Persist the frozen anchor in the platoon data-driven model
+        // (movementTechnique was already written above, before the chaining)
         [_pltIdT, "trailAnchor", _anchorT] call FTCS_fnc_registrySetPlatoon;
         _platoonsMap set [_pltKey, _pltData];
 
@@ -832,10 +878,15 @@ switch (_commandCode) do {
     // =========================================================================
     case "PLT_ROAD_COMPACT": {
         private _pltIdC = missionNamespace getVariable ["FTCS_Player_Platoon_ID", 1];
-        private _pltKeyC = format ["PLT_%1", _pltIdC];
-        private _platoonsMapC = FTCS_Company_Data getOrDefault ["platoons", createHashMap];
-        private _pltDataC = _platoonsMapC getOrDefault [_pltKeyC, createHashMap];
-        private _techniqueC = _pltDataC getOrDefault ["movementTechnique", "CROSS_COUNTRY"];
+
+        // MARCH WORLD from the PLATOON REGISTRY sentinel (Rule 16/20). It used to be
+        // read from FTCS_Company_Data (the doctrine), which fn_registrySetPlatoon no
+        // longer mirrors for this field: ordering the trail column wrote TRAIL_COLUMN
+        // to the registry, the router kept reading the stale doctrine value and fell
+        // through to the ROAD branch -> "No active road march column" while marching
+        // on the leader track.
+        private _techniqueC = [_pltIdC, "movementTechnique", "CROSS_COUNTRY"] call FTCS_fnc_registryGetPlatoon;
+        if (!(_techniqueC isEqualType "")) then { _techniqueC = "CROSS_COUNTRY"; };
 
         // Router: the same Compact command serves both march worlds.
         // TRAIL_COLUMN compacts into a staggered double lane over the leader track;
@@ -1159,7 +1210,10 @@ switch (_commandCode) do {
                     // Re-launch follow-commander threads for the rejoined sub-teams to follow their Squad Leader
                     private _subTeamsToFollow = +_squadElements;
                     _subTeamsToFollow deleteAt 0; // Exclude Squad Leader team
-                    private _followMode = missionNamespace getVariable ["FTCS_Platoon_Follow_Mode", "FOLLOWING_COMMANDER_REL"];
+                    // Follow mode comes from the PLATOON REGISTRY (Rule 20), not a global.
+                    private _subPltId = missionNamespace getVariable ["FTCS_Player_Platoon_ID", 1];
+                    private _followModeRaw = [_subPltId, "followMode", "REL"] call FTCS_fnc_registryGetPlatoon;
+                    private _followMode = if (_followModeRaw == "ABS") then { "FOLLOWING_COMMANDER_ABS" } else { "FOLLOWING_COMMANDER_REL" };
                     {
                         if (!isNull _x) then {
                             [_x, _followMode, _leadTeamLeader] spawn FTCS_fnc_formationsGroupDoFollowCommander;
@@ -1449,7 +1503,10 @@ switch (_commandCode) do {
             [_scoutGroupId, "teamAttachment", "DETACHED_FREE"] call FTCS_fnc_registrySet;
 
             // Launch follow-commander thread strictly for this scout group
-            private _followMode = missionNamespace getVariable ["FTCS_Platoon_Follow_Mode", "FOLLOWING_COMMANDER_REL"];
+            // (follow mode read from the platoon registry sentinel - Rule 20)
+            private _scoutPltId = missionNamespace getVariable ["FTCS_Player_Platoon_ID", 1];
+            private _scoutFollowRaw = [_scoutPltId, "followMode", "REL"] call FTCS_fnc_registryGetPlatoon;
+            private _followMode = if (_scoutFollowRaw == "ABS") then { "FOLLOWING_COMMANDER_ABS" } else { "FOLLOWING_COMMANDER_REL" };
             [_scoutGroup, _followMode, _ldr] spawn FTCS_fnc_formationsGroupDoFollowCommander;
 
             // 8. Re-compact the parent squad's internal formation locally without the detached scouts
@@ -1704,7 +1761,9 @@ switch (_commandCode) do {
         // leaving "parentSquadGroup" null made the NEXT HALT/REJOIN gather treat
         // the team as a platoon-level element and anchor it to the lieutenant
         // (reported bug: recalled scout jumping in front of the platoon leader).
-        private _followModeRejoin = missionNamespace getVariable ["FTCS_Platoon_Follow_Mode", "FOLLOWING_COMMANDER_REL"];
+        private _rejoinPltId = missionNamespace getVariable ["FTCS_Player_Platoon_ID", 1];
+        private _followModeRejoinRaw = [_rejoinPltId, "followMode", "REL"] call FTCS_fnc_registryGetPlatoon;
+        private _followModeRejoin = if (_followModeRejoinRaw == "ABS") then { "FOLLOWING_COMMANDER_ABS" } else { "FOLLOWING_COMMANDER_REL" };
         private _liveMapRA = createHashMap;
         { if (!isNull _x) then { _liveMapRA set [groupId _x, _x]; }; } forEach allGroups;
         // Squad anchors by squadId, so a recalled fireteam can be re-parented
@@ -1763,7 +1822,10 @@ switch (_commandCode) do {
 
                     private _subTeams = +_squadElements;
                     _subTeams deleteAt 0;
-                    private _followMode = missionNamespace getVariable ["FTCS_Platoon_Follow_Mode", "FOLLOWING_COMMANDER_REL"];
+                    // Follow mode from the platoon registry sentinel (Rule 20).
+                    private _squadPltId = missionNamespace getVariable ["FTCS_Player_Platoon_ID", 1];
+                    private _subFollowRaw = [_squadPltId, "followMode", "REL"] call FTCS_fnc_registryGetPlatoon;
+                    private _followMode = if (_subFollowRaw == "ABS") then { "FOLLOWING_COMMANDER_ABS" } else { "FOLLOWING_COMMANDER_REL" };
                     {
                         if (!isNull _x) then {
                             [_x, _followMode, _leadTeamLeader] spawn FTCS_fnc_formationsGroupDoFollowCommander;

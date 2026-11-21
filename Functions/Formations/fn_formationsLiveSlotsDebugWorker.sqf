@@ -41,29 +41,32 @@ FTCS_LiveSlotsWorker_Active = true;
         if (isNull _leaderUnit) then { _leaderUnit = player; };
 
         private _leaderPos = getPosATL _leaderUnit;
-        private _followMode = missionNamespace getVariable ["FTCS_Platoon_Follow_Mode", "FOLLOWING_COMMANDER_REL"];
+        // Follow mode / axis sentinels live in the PLATOON REGISTRY (Rule 20).
+        private _sentinelPlt = missionNamespace getVariable ["FTCS_Player_Platoon_ID", 1];
+        private _followMode = [_sentinelPlt, "followMode", "REL"] call FTCS_fnc_registryGetPlatoon;
 
         // Reference heading for formation slots:
         // In RELATIVE mode:
         //   - While marching (speed > 2 km/h): turns dynamically with leader march heading.
         //   - While stopped (speed <= 2 km/h): strictly locked to the consolidated platoon advance heading
-        //     (FTCS_Platoon_Advance_Direction), NEVER rotating with mouse view or leader head rotation.
-        // In ABSOLUTE mode: permanently locked to the fixed compass heading frozen when absolute was chosen.
-        private _refHeading = if (_followMode == "FOLLOWING_COMMANDER_REL") then {
+        //     (platoon registry "advanceDirection"), NEVER rotating with mouse view or leader head rotation.
+        // In ABSOLUTE mode: permanently locked to the compass heading frozen when absolute was chosen
+        //   (platoon registry "followModeFacing").
+        private _refHeading = if (_followMode == "REL") then {
             if (speed _leaderUnit > 2) then {
                 getDir _leaderUnit
             } else {
-                missionNamespace getVariable ["FTCS_Platoon_Advance_Direction", missionNamespace getVariable ["FTCS_Last_Commander_Dir", getDir _leaderUnit]]
+                [_sentinelPlt, "advanceDirection", getDir _leaderUnit] call FTCS_fnc_registryGetPlatoon
             };
         } else {
-            missionNamespace getVariable ["FTCS_Platoon_Fixed_Abs_Dir", missionNamespace getVariable ["FTCS_Platoon_Advance_Direction", getDir _leaderUnit]]
+            [_sentinelPlt, "followModeFacing", [_sentinelPlt, "advanceDirection", getDir _leaderUnit] call FTCS_fnc_registryGetPlatoon] call FTCS_fnc_registryGetPlatoon
         };
 
         // Check if platoon is currently marching along a road
         // PHASE 3: platoon state is read from the REGISTRY (RULE 16) via the
         // platoon accessor; fn_registryGetPlatoon still falls back to the
         // doctrine mirror while the migration is in progress.
-        private _pId = missionNamespace getVariable ["FTCS_Player_Platoon_ID", 1];
+        private _pId = _sentinelPlt;
         private _technique = [_pId, "movementTechnique", "CROSS_COUNTRY"] call FTCS_fnc_registryGetPlatoon;
         private _activePath = [_pId, "roadPath", []] call FTCS_fnc_registryGetPlatoon;
         private _isRoadMode = (_technique == "ROAD_COLUMN" && count _activePath >= 2);

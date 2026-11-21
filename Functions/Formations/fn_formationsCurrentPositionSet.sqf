@@ -75,21 +75,32 @@ if (_currentPhase == 0) exitWith {
     false;
 };
 
-// 3. Resolve active follow mode (Relative vs Absolute)
-private _followMode = if (_explicitMode != "") then {
+// 3. Resolve active follow mode (Relative vs Absolute). The ORDER lives in the
+// platoon registry (Rule 20); an explicit mode passed by the caller wins because
+// it is the order being applied right now.
+private _followModeCleaned = if (_explicitMode != "") then {
     _explicitMode
 } else {
-    missionNamespace getVariable ["FTCS_Platoon_Follow_Mode", "FOLLOWING_COMMANDER_REL"]
+    [_pltNum, "followMode", "REL"] call FTCS_fnc_registryGetPlatoon
 };
 
-private _isRelative = (_followMode == "FOLLOWING_COMMANDER_REL");
+private _isRelative = (_followModeCleaned != "ABS");
+// Normalised group mode string handed to the follow loops
+private _followMode = if (_isRelative) then { "FOLLOWING_COMMANDER_REL" } else { "FOLLOWING_COMMANDER_ABS" };
 private _leaderGroup = group _platoonLeaderUnit;
 
-// Update global advance direction strictly from leader's current heading
+// Update the platoon axis sentinels strictly from the leader's current heading.
+// Registry first (Rule 20); the legacy globals are still refreshed because the
+// deployment pipeline (fn_executeDeployment / fn_initDeployMenu) reads them.
+// "followModeFacing" is rewritten too: this capture DEFINES the locked compass
+// bearing whenever it runs (REL/ABS switch, ground capture), exactly as the
+// former company-wide Fixed_Abs_Dir write did.
 private _advanceDir = getDir _platoonLeaderUnit;
+[_pltNum, "followModeFacing", _advanceDir] call FTCS_fnc_registrySetPlatoon;
+[_pltNum, "advanceDirection", _advanceDir] call FTCS_fnc_registrySetPlatoon;
 missionNamespace setVariable ["FTCS_Platoon_Fixed_Abs_Dir", _advanceDir];
-missionNamespace setVariable ["FTCS_Platoon_Advance_Direction", _advanceDir];
 missionNamespace setVariable ["FTCS_Last_Commander_Dir", _advanceDir];
+missionNamespace setVariable ["FTCS_Platoon_Advance_Direction", _advanceDir];
 
 private _allSubordinateGroups = [];
 

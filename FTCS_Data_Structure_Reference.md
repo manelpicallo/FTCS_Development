@@ -47,6 +47,30 @@ missionNamespace
 │     │     Se siembra desde la doctrina; global espejo: FTCS_Platoon_Phase_<N>.
 │     ├── "movementTechnique" : ENUM STRING "CROSS_COUNTRY" | "ROAD_COLUMN" | "TRAIL_FILE"
 │     │     Escritor: FTCS_fnc_registrySetPlatoon (espejo al árbol durante la migración)
+│     ├── "followMode"        : ENUM STRING "REL" | "ABS"   (SEMILLA: "ABS")
+│     │     LA ORDEN que dio el teniente al pelotón (modo de seguimiento general).
+│     │     Escritores: fn_applyCommandToTarget (PLT_MODE_RELATIVE / PLT_MODE_ABSOLUTE,
+│     │     y el bloque de orden de formación cross-country, que sólo cambia el modo si
+│     │     el llamante publica `PLT_MODE_EXPLICIT` = 1 (REL) o 2 (ABS)).
+│     │     Una escuadra o equipo que se sale de la formación NO cambia este campo: escribe
+│     │     su EXCEPCIÓN en su propio "movingMode".
+│     │     Lector: fn_menuGetState (fila Follow Mode) y todos los consumidores del eje.
+│     ├── "followModeFacing"   : NUMBER 0-360
+│     │     Rumbo congelado del modo ABS (y eje congelado que usa REJOIN-KEEP).
+│     │     Escritores: PLT_MODE_ABSOLUTE, fn_formationsCurrentPositionSet,
+│     │     fn_formationsApplyPlatoonOrder, REJOIN-KEEP de fn_platoonHaltRejoin.
+│     ├── "advanceDirection"   : NUMBER 0-360
+│     │     Eje de avance VIVO del pelotón en modo REL (lo reescribe el bucle de
+│     │     seguimiento del comandante mientras marcha). Mismo conjunto de escritores
+│     │     que "followModeFacing". Lector canónico: fn_platoonAdvanceAxis.
+│     ├── "columnLayout"       : ENUM STRING "" | "STAGGERED" | "COMPACT" | "LEFT" | "RIGHT"
+│     │     Layout de la columna de marcha activa ("" = ninguna todavía).
+│     │     Escritores: nacimiento de columna (fn_applyCommandToTarget),
+│     │     fn_formationsRoadCompactColumn, fn_formationsTrailColumnSet,
+│     │     fn_formationsTrailCompactColumn.
+│     ├── "edgeMarginSteps"    : SCALAR 0..4 (3 m por nivel)
+│     │     Margen de arcén de la columna de carretera.
+│     │     Escritor único: fn_roadEdgeModeToggle.
 │     ├── "roadPath"         : ARRAY de [posATL, tangentDir, roadWidth] (polilínea activa)
 │     ├── "roadAnchor"       : HASHMAP (ancla de marcha por carretera del pelotón)
 │     ├── "trailAnchor"      : HASHMAP (ancla de columna de estela del pelotón)
@@ -66,8 +90,17 @@ missionNamespace
 │        (mantenido por FTCS_fnc_registrySetPlatoon) hasta completar la Fase 3,
 │        en la que los consumidores dejarán de leer FTCS_Company_Data.
 ├── FTCS_Platoon_Phase_1 .. 4       (NUMBER: Fase operacional activa individual por pelotón: 1, 2 o 3)
-├── FTCS_Platoon_Follow_Mode        (STRING: Modo de seguimiento activo: "FOLLOWING_COMMANDER_REL" | "FOLLOWING_COMMANDER_ABS")
-├── FTCS_Platoon_Fixed_Abs_Dir      (NUMBER: Rumbo fijo congelado en brújula [0-360] para seguimiento y debug en modo absoluto)
+├── FTCS_Platoon_Follow_Mode        (LEGACY - DEPRECADO: espejo de solo escritura de
+│                                     FTCS_Platoons_Registry[plt]["followMode"]. Ninguna
+│                                     función de runtime lo LEE ya; se conserva únicamente para
+│                                     el pipeline de despliegue. Si lo lees fuera de ese pipeline,
+│                                     es un bug: usa el registro)
+├── FTCS_Platoon_Fixed_Abs_Dir      (LEGACY - DEPRECADO: espejo de
+│                                     FTCS_Platoons_Registry[plt]["followModeFacing"])
+├── FTCS_Platoon_Advance_Direction  (LEGACY - DEPRECADO: espejo de
+│                                     FTCS_Platoons_Registry[plt]["advanceDirection"])
+├── FTCS_Last_Commander_Dir         (LEGACY - DEPRECADO: espejo de "advanceDirection",
+│                                     usado por el pipeline de despliegue)
 ├── FTCS_Road_Anchor_PLT_1 .. 4        (HashMap: Ancla de marcha por carretera por pelotón: anchorPos, advanceDir,
 │                                        roadPath, headDist, lastAnchorMovePos, edgeMarginSteps, columnLayout, generation)
 ├── FTCS_Road_Anchor_Gen_PLT_1 .. 4    (NUMBER: Generación del ancla de road march — cada orden nueva invalida hilos previos)
@@ -104,6 +137,11 @@ El código de juego ESCRIBE estos campos en el momento del cambio; los menús SO
 | Campo (fuente)                                   | Tipo     | Escritor único                          | Gates que lo consumen                  |
 |--------------------------------------------------|----------|------------------------------------------|----------------------------------------|
 | `FTCS_Platoons_Registry[plt]["movementTechnique"]` | ENUM   | dispatcher de órdenes (fn_applyCommandToTarget) | gate_compact, gate_edge_push/pull, gate_tech_* |
+| `FTCS_Platoons_Registry[plt]["followMode"]`      | ENUM     | fn_applyCommandToTarget (PLT_MODE_RELATIVE/ABSOLUTE + bloque de formación cross-country con `PLT_MODE_EXPLICIT`) | fila Follow Mode (fn_menuGetState + gate_follow_mode), fn_platoonAdvanceAxis, bucles de seguimiento |
+| `FTCS_Platoons_Registry[plt]["followModeFacing"]`| NUMBER   | ABS / captura de posiciones / aplicador de formación / REJOIN-KEEP | fn_platoonAdvanceAxis (ABS), rejoin |
+| `FTCS_Platoons_Registry[plt]["advanceDirection"]`| NUMBER   | bucle de seguimiento (REL), captura de posiciones, columna de carretera | fn_platoonAdvanceAxis (REL), gates de marcha |
+| `FTCS_Platoons_Registry[plt]["columnLayout"]`    | ENUM     | nacimiento de columna, compact road/trail, trailColumnSet | (pendiente: gates de layout de columna) |
+| `FTCS_Platoons_Registry[plt]["edgeMarginSteps"]` | NUMBER   | fn_roadEdgeModeToggle                  | (pendiente: gates de arcén)            |
 | `FTCS_Platoons_Registry[plt]["orderState"]`      | ENUM     | fn_platoonHaltRejoin                     | gate_halted, gate_not_halted           |
 | `FTCS_Platoons_Registry[plt]["currentPhase"]`    | NUMBER   | fn_platoonSetOperationalPhase            | gate_march, gate_phase1/2/3            |
 | `FTCS_Groups_Registry_Table[grp]["movingMode"]`  | ENUM     | bucles de marcha / fn_squadOrderApply    | gate_squad_N, gate_not_following, gate_flank_* |
@@ -112,6 +150,16 @@ El código de juego ESCRIBE estos campos en el momento del cambio; los menús SO
 **Valores de `movementTechnique` válidos para gates:** `CROSS_COUNTRY` (columnas no disponibles) |
 `ROAD_COLUMN` (compact + edge rows disponibles) | `TRAIL_COLUMN` (solo compact disponible).
 Cualquier valor nuevo debe pasar por la DIRECTRIZ ENUM-REGISTRY (sección 0) antes de usarse en un gate.
+
+**Follow mode vs. movingMode (no confundir):** `followMode` (registro de PELOTÓN) es la ORDEN
+que el teniente dio al pelotón. `movingMode` (registro de GRUPO) es el estado efectivo de cada
+escuadra/equipo, que puede desviarse de la orden (scout desprendido, HALT, marcha de carretera…).
+Ningún gate debe votar el modo de seguimiento entre grupos: se lee el campo del pelotón.
+
+**Modo de nacimiento de una formación:** una formación cross-country (WEDGE, VEE, LINE,
+ECHELON_RIGHT, ECHELON_LEFT) nace SIEMPRE en `followMode = ABS` (rumbo fijo congelado en el
+afuste del teniente al ordenarla). El modo REL es una orden explícita del jugador (fila 4 del
+menú raíz). Column/File (carretera/estela) no tocan el modo.
 
 **Regla de extensión:** si un gate futuro necesita un estado que no está en esta tabla,
 NO se lee del código interno: se añade el campo al registro con escritor único y se documenta
@@ -280,12 +328,14 @@ FTCS_Groups_Registry_Table (HashMap)
       │
       ├── "platoonFormation"  : ENUM STRING (Formación macro del slot que este elemento ocupa en el despliegue del pelotón)
       │     Valores válidos:
-      │     └── "COLUMN" | "LINE" | "WEDGE" | "VEE" | "ECHELON_RIGHT" | "ECHELON_LEFT" | "DIAMOND" | "FILE"
-      │     Escritor único: fn_formationsTypePlatoonSet (pipeline de formaciones de
+      │     └── "NONE" | "COLUMN" | "LINE" | "WEDGE" | "VEE" | "ECHELON_RIGHT" | "ECHELON_LEFT" | "DIAMOND" | "FILE"
+      │     "NONE" = NO se ha ordenado ninguna formación todavía (valor de SEMILLA).
+      │     Escritor único: fn_formationsApplyPlatoonOrder (pipeline de formaciones de
       │     pelotón). Sustituye al antiguo "formationType" (eliminado por ambiguo).
-      │     Default doctrinal al spawn: "COLUMN" (fn_registryInit, spawnSupportUnit).
-      │     La marcha por carretera NO escribe este campo (geometría propia vía
-      │     campos "road*").
+      │     Default doctrinal al spawn: "NONE" (fn_registryInit, spawnSupportUnit).
+      │     La marcha por carretera/estela NO escribe este campo (geometría propia vía
+      │     campos "road*") y Ground Lock tampoco: por eso la fila 4 del menú raíz
+      │     (Follow Mode) queda en gris mientras el valor sea "NONE" o "MIXED".
       │
       ├── "squadFormation"    : ENUM STRING (Formación interna vigente del squad)
       │     Valores válidos: idénticos a "platoonFormation".

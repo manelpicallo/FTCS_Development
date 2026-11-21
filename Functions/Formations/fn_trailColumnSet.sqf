@@ -37,7 +37,16 @@
 
 params [["_pltId", 1], ["_subGroups", []], ["_leader", objNull]];
 
-if (isNull _leader || { count _subGroups == 0 }) exitWith {
+// Guard order matters: a NULL leader is a different failure from an EMPTY group
+// list, and both used to return the same 0 with no trace. The caller restores
+// CROSS_COUNTRY on 0, so the reason must be visible in the RPT (Rule 19: real
+// failures log always, with the *** prefix).
+if (isNull _leader) exitWith {
+    diag_log format ["[FTCS][TRAIL] *** ABORT: platoon %1 has no valid leader unit.", _pltId];
+    0
+};
+if ((!(_subGroups isEqualType [])) || { count _subGroups == 0 }) exitWith {
+    diag_log format ["[FTCS][TRAIL] *** ABORT: platoon %1 has no subordinate groups to chain (subGroups=%2).", _pltId, _subGroups];
     0
 };
 

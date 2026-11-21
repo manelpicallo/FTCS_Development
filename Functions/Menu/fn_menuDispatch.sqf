@@ -32,7 +32,28 @@
 
 params [["_token", ""]];
 
-if (_token == "") exitWith {};
+// Hard argument contract: the row expression may be re-evaluated with the previous
+// expression's value when the engine replays an event (observed in the RPT), so a
+// non-string token must never reach splitString.
+if (!(_token isEqualType "")) then {
+    if (_token isEqualType []) then {
+        if ((count _token > 1) && { (_token select 1) isEqualType "" }) then {
+            _token = _token select 1;
+        } else {
+            if ((count _token > 0) && { (_token select 0) isEqualType "" }) then {
+                _token = _token select 0;
+            } else {
+                _token = "";
+            };
+        };
+    } else {
+        _token = "";
+    };
+};
+
+if (_token == "") exitWith {
+    diag_log "[FTCS][MENU] *** DISPATCH ABORT: empty/non-string token.";
+};
 
 private _parts = _token splitString ":";
 if (count _parts < 2) exitWith {
@@ -86,8 +107,10 @@ switch (_family) do {
             case "SET_PHASE": { _routerCode = format ["SET_PHASE_%1", _arg]; };
             case "FORM":      { _routerCode = format ["PLT_FORM_%1", _arg]; };
             case "MODE_TOGGLE": {
-                private _cur = missionNamespace getVariable ["FTCS_Platoon_Follow_Mode", "FOLLOWING_COMMANDER_REL"];
-                _routerCode = if (_cur == "FOLLOWING_COMMANDER_REL") then { "PLT_MODE_ABSOLUTE" } else { "PLT_MODE_RELATIVE" };
+                // Toggle decided on the PLATOON REGISTRY sentinel (Rule 20), the
+                // same field fn_menuGetState publishes for the row label.
+                private _cur = _state getOrDefault ["followMode", "REL"];
+                _routerCode = if (_cur == "REL") then { "PLT_MODE_ABSOLUTE" } else { "PLT_MODE_RELATIVE" };
             };
             case "MODE_ABSOLUTE";
             case "MODE_RELATIVE": {

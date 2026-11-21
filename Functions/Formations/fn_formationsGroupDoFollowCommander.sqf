@@ -7,7 +7,9 @@
                  When stopped (speed <= 2), subordinate groups (Squad Leaders following
                  the Platoon Leader, and Fireteams following their Squad Leader) anchor
                  their formation positions and facing strictly aligned with the platoon's
-                 advance direction in that moment (FTCS_Platoon_Advance_Direction).
+                 advance direction in that moment (platoon registry "advanceDirection").
+                 Follow mode and axis are read from FTCS_Platoons_Registry[pltId]
+                 (Rule 20): the group only owns its EXCEPTION ("movingMode").
 */
 
 params ["_group", "_mode", "_leader"];
@@ -28,11 +30,15 @@ private _lastTargetPos = [0, 0, 0];
 // Identify if the reference leader is the main platoon commander (player or platoon HQ leader)
 private _isPlatoonCommander = (isPlayer _leader || {_leader == (leader (missionNamespace getVariable ["FTCS_Group_Commander", grpNull]))} || {_leader == (missionNamespace getVariable ["FTCS_Platoon_Leader_Unit", objNull])} || {(vehicleVarName _leader) find "LEADER" >= 0 && {(vehicleVarName _leader) find "SQD_" < 0}});
 
+// Platoon registry sentinels: follow mode and axis belong to the PLATOON (Rule 20).
+// Resolved once per thread launch; the live axis is re-read inside the loop.
+private _pltId = missionNamespace getVariable ["FTCS_Player_Platoon_ID", 1];
+private _pltMode = [_pltId, "followMode", "REL"] call FTCS_fnc_registryGetPlatoon;
+
 // Only initialize advance direction if not previously defined by a formation order or active march
 if (_isPlatoonCommander && {_mode != "FOLLOWING_COMMANDER_ABS"}) then {
-    if (isNil { missionNamespace getVariable "FTCS_Platoon_Advance_Direction" }) then {
-        missionNamespace setVariable ["FTCS_Last_Commander_Dir", getDir _leader];
-        missionNamespace setVariable ["FTCS_Platoon_Advance_Direction", getDir _leader];
+    if (isNil { [_pltId, "advanceDirection", nil] call FTCS_fnc_registryGetPlatoon }) then {
+        [_pltId, "advanceDirection", getDir _leader] call FTCS_fnc_registrySetPlatoon;
     };
 };
 
@@ -40,15 +46,15 @@ if (_isPlatoonCommander && {_mode != "FOLLOWING_COMMANDER_ABS"}) then {
 
 // Retrieve current platoon advance direction
 private _platoonDir = if (_mode == "FOLLOWING_COMMANDER_ABS") then {
-    missionNamespace getVariable ["FTCS_Platoon_Fixed_Abs_Dir", missionNamespace getVariable ["FTCS_Platoon_Advance_Direction", getDir _leader]]
+    [_pltId, "followModeFacing", [_pltId, "advanceDirection", getDir _leader] call FTCS_fnc_registryGetPlatoon] call FTCS_fnc_registryGetPlatoon
 } else {
-    missionNamespace getVariable ["FTCS_Platoon_Advance_Direction", missionNamespace getVariable ["FTCS_Last_Commander_Dir", getDir _leader]]
+    [_pltId, "advanceDirection", getDir _leader] call FTCS_fnc_registryGetPlatoon
 };
+private _relPos = [ _groupID, "relPosition" ] call FTCS_fnc_registryGet;
 
 // Initial deployment positioning
 if (_mode == "FOLLOWING_COMMANDER_REL") then 
 {
-    private _relPos = [ _groupID, "relPosition" ] call FTCS_fnc_registryGet;
     if (!isNil "_relPos" && {_relPos isEqualType []} && {count _relPos >= 2} && {(_relPos select 0) >= 0}) then {
         private _dist = _relPos select 0;
         private _relAngle = _relPos select 1;
@@ -60,7 +66,6 @@ if (_mode == "FOLLOWING_COMMANDER_REL") then
 
 if (_mode == "FOLLOWING_COMMANDER_ABS") then 
 {
-    private _relPos = [ _groupID, "relPosition" ] call FTCS_fnc_registryGet;
     if (!isNil "_relPos" && {_relPos isEqualType []} && {count _relPos >= 2} && {(_relPos select 0) >= 0}) then {
         _group move ((getPosATL _leader) getPos [_relPos select 0, _platoonDir + (_relPos select 1)]);
     };
@@ -94,14 +99,14 @@ while {((_group getVariable ["FTCS_FollowThread_ID", -1]) == _threadID) &&
 
         { _x disableAI "RADIOPROTOCOL"; } foreach units _group;
 
-        // Continuously update platoon advance direction from commander's active march heading (relative mode only)
-        if (_isPlatoonCommander && {_mode != "FOLLOWING_COMMANDER_ABS"}) then {
-            private _liveDir = getDir _leader;
-            missionNamespace setVariable ["FTCS_Last_Commander_Dir", _liveDir];
-            missionNamespace setVariable ["FTCS_Platoon_Advance_Direction", _liveDir];
+        // Continuously update the platoon axis of advance from the commander's active
+        // march heading (relative mode only). SENTINEL FIRST, one-way flow (Rule 20):
+        // gameplay writes, the menu/other threads only read.
+        if (_isPlatoonCommander && {_pltMode != "ABS"}) then {
+            [_pltId, "advanceDirection", getDir _leader] call FTCS_fnc_registrySetPlatoon;
         };
 
-        private _relPos = [ _groupID, "relPosition" ] call FTCS_fnc_registryGet;
+        _relPos = [ _groupID, "relPosition" ] call FTCS_fnc_registryGet;
         if (!isNil "_relPos" && {_relPos isEqualType []} && {count _relPos >= 2} && {(_relPos select 0) >= 0}) then {
             if (_mode == "FOLLOWING_COMMANDER_REL") then {
                 _group move (_leader getRelPos [_relPos select 0, _relPos select 1]);
@@ -126,7 +131,7 @@ while {((_group getVariable ["FTCS_FollowThread_ID", -1]) == _threadID) &&
         private _curPlatoonDir = if (_mode == "FOLLOWING_COMMANDER_ABS") then {
             _platoonDir
         } else {
-            missionNamespace getVariable ["FTCS_Platoon_Advance_Direction", missionNamespace getVariable ["FTCS_Last_Commander_Dir", getDir _leader]]
+            [_pltId, "advanceDirection", getDir _leader] call FTCS_fnc_registryGetPlatoon
         };
 
         // Resolve Platoon Leader unit (Lieutenant / Player or NPC Platoon Leader)
@@ -145,13 +150,15 @@ while {((_group getVariable ["FTCS_FollowThread_ID", -1]) == _threadID) &&
         // In both RELATIVE and ABSOLUTE modes, when stopped, the internal unit facing of each group
         // aligns strictly with the platoon's active formation direction / platoon leader's heading.
         private _targetFacing = if (_mode == "FOLLOWING_COMMANDER_REL") then {
-            missionNamespace getVariable ["FTCS_Platoon_Advance_Direction", getDir _platoonLeader]
+            [_pltId, "advanceDirection", getDir _platoonLeader] call FTCS_fnc_registryGetPlatoon
         } else {
             getDir _platoonLeader
         };
 
-        // Read assigned formation polar coordinates
-        private _relPos = [ _groupID, "relPosition" ] call FTCS_fnc_registryGet;
+        // Read assigned formation polar coordinates (reusing the script-scope
+        // _relPos: a second `private _relPos` here would shadow the outer one and
+        // re-trigger the Lesson 34/37 family of scope bugs)
+        _relPos = [ _groupID, "relPosition" ] call FTCS_fnc_registryGet;
         private _hasValidPos = (!isNil "_relPos" && {_relPos isEqualType []} && {count _relPos >= 2} && {(_relPos select 0) >= 0});
         private _targetPos = [0, 0, 0];
         if (_hasValidPos) then {

@@ -24,6 +24,21 @@
 
                  A row whose backend command does NOT exist is NOT declared here:
                  the menu never shows a button that pretends to work.
+
+                 NAVIGATION ROWS (submenu): they open a CHILD menu and Arma keeps
+                 the menu alive ONLY because field 2 (submenu) is NON-EMPTY. Moving
+                 the child id into the row expression turns the row into a TERMINAL
+                 order: Arma runs the expression and CLOSES the menu, so the child
+                 opens and vanishes instantly.
+                 What changed is the TARGET: instead of "#USER:<catalog var>" (raw
+                 data, static enabled flags, no gates), the row points to
+                 "#USER:FTCS_MENU_<child>_Var", the BUILT copy published by
+                 fn_menuOpen. Navigation stays engine-driven (menu alive) AND the
+                 child arrives already gated, so grey/white is decided by
+                 fn_menuGate - never by a static "0" written here.
+                 Rule for new rows: to grey a row, its gate lives in fn_menuGate; to
+                 change its text, the meta dynamic id (field 7) is used; to hide it,
+                 field 5 is set to "0". The catalog stays DATA ONLY.
     Language: Strictly English (Rule 7, Rule 11)
 
     +-----------------------------------------------------------------------------+
@@ -59,16 +74,16 @@
 // =============================================================================
 FTCS_MENU_Root = [
     ["[DEBUG] FTCS - PLATOON COMMAND", false],
-    ["1. Operational Phase", [2], "#USER:FTCS_MENU_Phase", -5, [["expression", ""]], "1", "1", ["", "", false, ""]],
-    ["2. Platoon Formations", [3], "#USER:FTCS_MENU_Formations", -5, [["expression", ""]], "1", "1", ["", "", false, ""]],
-    ["3. March Column & Route", [4], "#USER:FTCS_MENU_MarchRoute", -5, [["expression", ""]], "1", "1", ["", "gate_march", false, ""]],
-    ["4. Follow Mode: ABSOLUTE (Fixed Compass)", [5], "", -5, [["expression", "['PLT:MODE_TOGGLE'] call FTCS_fnc_menuDispatch;"]], "1", "1", ["PLT:MODE_TOGGLE", "gate_unit", false, "followmode"]],
-    ["5. Halt & Rejoin", [6], "#USER:FTCS_MENU_HaltRejoin", -5, [["expression", ""]], "1", "1", ["", "", false, ""]],
-    ["6. Pace & Movement Technique", [7], "#USER:FTCS_MENU_PaceTech", -5, [["expression", ""]], "1", "1", ["", "gate_march", false, ""]],
-    ["7. Platoon Stance", [8], "#USER:FTCS_MENU_PlatoonStance", -5, [["expression", ""]], "1", "1", ["", "", false, ""]],
-    ["8. Weapons Control", [9], "#USER:FTCS_MENU_WeaponsControl", -5, [["expression", ""]], "1", "1", ["", "", false, ""]],
-    ["9. Platoon Scouts", [10], "#USER:FTCS_MENU_Scouts", -5, [["expression", ""]], "1", "1", ["", "gate_scout", false, ""]],
-    ["10. Squad Directives", [11], "#USER:FTCS_MENU_SquadHub", -5, [["expression", ""]], "1", "1", ["", "gate_squads", false, ""]]
+    ["1. Operational Phase", [2], "#USER:FTCS_MENU_Phase_Var", -5, [["expression", ""]], "1", "1", ["", "", false, "nav:FTCS_MENU_Phase"]],
+    ["2. Platoon Formations", [3], "#USER:FTCS_MENU_Formations_Var", -5, [["expression", ""]], "1", "1", ["", "", false, "nav:FTCS_MENU_Formations"]],
+    ["3. March Column & Route", [4], "#USER:FTCS_MENU_MarchRoute_Var", -5, [["expression", ""]], "1", "1", ["", "gate_march", false, "nav:FTCS_MENU_MarchRoute"]],
+    ["4. Follow Mode: ABSOLUTE (Fixed Compass)", [5], "", -5, [["expression", "['PLT:MODE_TOGGLE'] call FTCS_fnc_menuDispatch;"]], "1", "1", ["PLT:MODE_TOGGLE", "gate_follow_mode", false, "followmode"]],
+    ["5. Halt & Rejoin", [6], "#USER:FTCS_MENU_HaltRejoin_Var", -5, [["expression", ""]], "1", "1", ["", "", false, "nav:FTCS_MENU_HaltRejoin"]],
+    ["6. Pace & Movement Technique", [7], "#USER:FTCS_MENU_PaceTech_Var", -5, [["expression", ""]], "1", "1", ["", "gate_march", false, "nav:FTCS_MENU_PaceTech"]],
+    ["7. Platoon Stance", [8], "#USER:FTCS_MENU_PlatoonStance_Var", -5, [["expression", ""]], "1", "1", ["", "", false, "nav:FTCS_MENU_PlatoonStance"]],
+    ["8. Weapons Control", [9], "#USER:FTCS_MENU_WeaponsControl_Var", -5, [["expression", ""]], "1", "1", ["", "", false, "nav:FTCS_MENU_WeaponsControl"]],
+    ["9. Platoon Scouts", [10], "#USER:FTCS_MENU_Scouts_Var", -5, [["expression", ""]], "1", "1", ["", "gate_scout", false, "nav:FTCS_MENU_Scouts"]],
+    ["10. Squad Directives", [11], "#USER:FTCS_MENU_SquadHub_Var", -5, [["expression", ""]], "1", "1", ["", "gate_squads", false, "nav:FTCS_MENU_SquadHub"]]
 ];
 
 // =============================================================================
@@ -176,11 +191,11 @@ FTCS_MENU_Scouts = [
 // =============================================================================
 FTCS_MENU_SquadHub = [
     ["Squad & Scout Directives", false],
-    ["1. Scouts Directive", [2], "#USER:FTCS_MENU_Scouts", -5, [["expression", ""]], "1", "1", ["", "", false, ""]],
-    ["2. [SQUAD_SLOT_1]", [3], "#USER:FTCS_MENU_SquadOrders_1", -5, [["expression", ""]], "1", "1", ["", "gate_squad_1", true, "squad_row"]],
-    ["3. [SQUAD_SLOT_2]", [4], "#USER:FTCS_MENU_SquadOrders_2", -5, [["expression", ""]], "1", "1", ["", "gate_squad_2", true, "squad_row"]],
-    ["4. [SQUAD_SLOT_3]", [5], "#USER:FTCS_MENU_SquadOrders_3", -5, [["expression", ""]], "1", "1", ["", "gate_squad_3", true, "squad_row"]],
-    ["5. [SQUAD_SLOT_4]", [6], "#USER:FTCS_MENU_SquadOrders_4", -5, [["expression", ""]], "1", "1", ["", "gate_squad_4", true, "squad_row"]]
+    ["1. Scouts Directive", [2], "#USER:FTCS_MENU_Scouts_Var", -5, [["expression", ""]], "1", "1", ["", "", false, "nav:FTCS_MENU_Scouts"]],
+    ["2. [SQUAD_SLOT_1]", [3], "#USER:FTCS_MENU_SquadOrders_1", -5, [["expression", ""]], "1", "1", ["", "gate_squad_1", true, "squad_row:1"]],
+    ["3. [SQUAD_SLOT_2]", [4], "#USER:FTCS_MENU_SquadOrders_2", -5, [["expression", ""]], "1", "1", ["", "gate_squad_2", true, "squad_row:2"]],
+    ["4. [SQUAD_SLOT_3]", [5], "#USER:FTCS_MENU_SquadOrders_3", -5, [["expression", ""]], "1", "1", ["", "gate_squad_3", true, "squad_row:3"]],
+    ["5. [SQUAD_SLOT_4]", [6], "#USER:FTCS_MENU_SquadOrders_4", -5, [["expression", ""]], "1", "1", ["", "gate_squad_4", true, "squad_row:4"]]
 ];
 
 // =============================================================================
@@ -205,8 +220,8 @@ FTCS_MENU_SquadOrders_Template = [
     ["7. Open Flank Right", [8], "", -5, [["expression", "['SQD:FLANK_R:%1'] call FTCS_fnc_menuDispatch;"]], "1", "1", ["SQD:FLANK_R:%1", "gate_flank_R", false, ""]],
     ["8. Fall Back (15m)", [9], "", -5, [["expression", "['SQD:FALL_BACK:%1'] call FTCS_fnc_menuDispatch;"]], "1", "1", ["SQD:FALL_BACK:%1", "gate_always", false, ""]],
     ["9. Rejoin Platoon Formation", [10], "", -5, [["expression", "['SQD:REJOIN_FORMATION:%1'] call FTCS_fnc_menuDispatch;"]], "1", "1", ["SQD:REJOIN_FORMATION:%1", "gate_not_following", false, ""]],
-    ["10. Squad Formation", [11], "#USER:FTCS_MENU_SquadFormations_%1", -5, [["expression", ""]], "1", "1", ["", "gate_always", false, ""]],
-    ["11. Squad Stance", [12], "#USER:FTCS_MENU_SquadStance_%1", -5, [["expression", ""]], "1", "1", ["", "gate_always", false, ""]]
+    ["10. Squad Formation", [11], "#USER:FTCS_MENU_SquadFormations_%1_Var", -5, [["expression", ""]], "1", "1", ["", "gate_always", false, "nav:FTCS_MENU_SquadFormations_%1"]],
+    ["11. Squad Stance", [12], "#USER:FTCS_MENU_SquadStance_%1_Var", -5, [["expression", ""]], "1", "1", ["", "gate_always", false, "nav:FTCS_MENU_SquadStance_%1"]]
 ];
 
 // =============================================================================
@@ -233,19 +248,29 @@ FTCS_MENU_SquadStance_Template = [
 ];
 
 // =============================================================================
-// 13. MENU TREE INDEX (root id -> parent map used by fn_menuOpen navigation)
+// 13. MENU TREE INDEX (parent id -> CHILDREN ids)
 // =============================================================================
+// fn_menuOpen reads this map to PRE-BUILD every child of the menu it is about to
+// show: Arma opens a row's `submenu` instantly and never calls a function on the
+// way, so a child must already exist (built + gated) before its parent appears.
+// Adding a submenu = one line here; forgetting it only means the child is empty
+// the first time it is opened from the parent (fn_menuOpen logs a *** CHILD BUILD
+// line in that case, so the omission is visible in the RPT).
 FTCS_MENU_Parents = createHashMapFromArray [
-    ["FTCS_MENU_Root", ""],
-    ["FTCS_MENU_Phase", "FTCS_MENU_Root"],
-    ["FTCS_MENU_Formations", "FTCS_MENU_Root"],
-    ["FTCS_MENU_MarchRoute", "FTCS_MENU_Root"],
-    ["FTCS_MENU_HaltRejoin", "FTCS_MENU_Root"],
-    ["FTCS_MENU_PaceTech", "FTCS_MENU_Root"],
-    ["FTCS_MENU_PlatoonStance", "FTCS_MENU_Root"],
-    ["FTCS_MENU_WeaponsControl", "FTCS_MENU_Root"],
-    ["FTCS_MENU_Scouts", "FTCS_MENU_Root"],
-    ["FTCS_MENU_SquadHub", "FTCS_MENU_Root"]
+    ["FTCS_MENU_Root", [
+        "FTCS_MENU_Phase", "FTCS_MENU_Formations", "FTCS_MENU_MarchRoute",
+        "FTCS_MENU_HaltRejoin", "FTCS_MENU_PaceTech", "FTCS_MENU_PlatoonStance",
+        "FTCS_MENU_WeaponsControl", "FTCS_MENU_Scouts", "FTCS_MENU_SquadHub"
+    ]],
+    ["FTCS_MENU_SquadHub", [
+        "FTCS_MENU_Scouts",
+        "FTCS_MENU_SquadOrders_1", "FTCS_MENU_SquadOrders_2",
+        "FTCS_MENU_SquadOrders_3", "FTCS_MENU_SquadOrders_4"
+    ]],
+    ["FTCS_MENU_SquadOrders_1", ["FTCS_MENU_SquadFormations_1", "FTCS_MENU_SquadStance_1"]],
+    ["FTCS_MENU_SquadOrders_2", ["FTCS_MENU_SquadFormations_2", "FTCS_MENU_SquadStance_2"]],
+    ["FTCS_MENU_SquadOrders_3", ["FTCS_MENU_SquadFormations_3", "FTCS_MENU_SquadStance_3"]],
+    ["FTCS_MENU_SquadOrders_4", ["FTCS_MENU_SquadFormations_4", "FTCS_MENU_SquadStance_4"]]
 ];
 
 true

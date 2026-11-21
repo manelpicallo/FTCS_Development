@@ -19,9 +19,9 @@
     Return contract (HashMap):
         "platoonId"      : SCALAR
         "phase"          : SCALAR 0..3            (FTCS_Platoon_Phase_<N>)
-        "followMode"     : STRING REL | ABS
+        "followMode"     : STRING REL | ABS      (platoon REGISTRY followMode = order)
         "halted"         : BOOLEAN                (registry orderState == "HALTED")
-        "formation"      : STRING                 (platoonFormation of any group)
+        "formation"      : STRING                 (common platoonFormation; "NONE" until a formation order)
         "stance"         : STRING                 ("MIXED" when groups disagree)
         "speed"          : STRING                 ("MIXED" when groups disagree)
         "roe"            : STRING                 ("MIXED" when groups disagree)
@@ -52,14 +52,24 @@ params [["_pltId", 1]];
 // ---------------------------------------------------------------------------
 private _plt = _pltId;
 
+// Hard type contract (RPT 20:46:11): the platoon registry is keyed by NUMBER. A
+// caller passing the wrong shape made `_plt` a HashMap, so line 60 aborted with
+// "getOrDefault: expected Number,Bool,Array,String..." and line 130 with
+// "Error !=: Type HashMap". Normalise the key ONCE here; every read below (phase
+// global, registry lookup, group filter) then receives a number.
+if (!(_plt isEqualType 0)) then { _plt = 1; };
+
 // ---- 1. Platoon-level scalars ------------------------------------------------
 private _state = createHashMap;
 _state set ["platoonId", _plt];
 _state set ["phase", missionNamespace getVariable [format ["FTCS_Platoon_Phase_%1", _plt], 0]];
-_state set ["followMode", missionNamespace getVariable ["FTCS_Platoon_Follow_Mode", "FOLLOWING_COMMANDER_REL"]];
 
 private _pltReg = (missionNamespace getVariable ["FTCS_Platoons_Registry", createHashMap]) getOrDefault [_plt, createHashMap];
 if (!(_pltReg isEqualType createHashMap)) then { _pltReg = createHashMap; };
+
+// Follow mode is the ORDER the lieutenant gave the platoon (REL | ABS), read from
+// the platoon registry sentinel (Rule 20) - never voted across groups.
+_state set ["followMode", _pltReg getOrDefault ["followMode", "REL"]];
 
 private _orderState = _pltReg getOrDefault ["orderState", "MARCH"];
 _state set ["halted", (_orderState == "HALTED")];
@@ -88,8 +98,7 @@ if (!(_roadAnchor isEqualType createHashMap)) then { _roadAnchor = createHashMap
 private _trailAnchor = missionNamespace getVariable [format ["FTCS_Trail_Anchor_PLT_%1", _plt], createHashMap];
 if (!(_trailAnchor isEqualType createHashMap)) then { _trailAnchor = createHashMap; };
 
-private _pltRegState = (missionNamespace getVariable ["FTCS_Platoons_Registry", createHashMap]) getOrDefault [_plt, createHashMap];
-if (!(_pltRegState isEqualType createHashMap)) then { _pltRegState = createHashMap; };
+private _pltRegState = _pltReg;
 private _pltRegRoadAnchor = _pltRegState getOrDefault ["roadAnchor", createHashMap];
 if (!(_pltRegRoadAnchor isEqualType createHashMap)) then { _pltRegRoadAnchor = createHashMap; };
 private _pltRegTrailAnchor = _pltRegState getOrDefault ["trailAnchor", createHashMap];
@@ -183,6 +192,9 @@ private _fnc_common = {
     if (_same) then { _first } else { "MIXED" }
 };
 
+// Common formation, or "MIXED" when the groups disagree. A platoon that has never
+// received a formation order carries "NONE" on every group (fn_registryInit seed),
+// so "NONE" is a real state the menu can grey out - it is NOT an empty string.
 _state set ["formation", [_formationVote] call _fnc_common];
 _state set ["stance", [_stanceVote] call _fnc_common];
 _state set ["speed", [_speedVote] call _fnc_common];

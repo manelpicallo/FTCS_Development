@@ -15,6 +15,7 @@
                    gate_always              always enabled
                    gate_unit                needs a valid platoon leader unit
                    gate_march               needs an operational phase (> 0)
+                   gate_follow_mode         needs a platoon formation ordered
                    gate_scout               needs at least one squad with effectives
                    gate_squads              needs at least one squad with effectives
                    gate_not_halted          disabled when the platoon is HALTED
@@ -43,12 +44,34 @@
     ================================================================================
 */
 
-params [
-    ["_gate", "gate_always"],
-    ["_state", createHashMap],
-    ["_squadRec", createHashMap]
-];
+params [["_gate", "gate_always"], ["_state", createHashMap], ["_squadRec", createHashMap]];
 
+// Hard argument contract (Lesson 34/37 - the RPT proved it twice):
+//   * line 70  "getordefault: Type Array, expected HashMap"   -> caller passed (gate, ARRAY, ARRAY)
+//   * line 93  "Error ==: Type HashMap, expected ..."          -> caller passed (state, gate, ...)
+// A function script does NOT type or reorder what it receives. Normalise HERE, once:
+//   1. _gate must be a String (it is the switch key).
+//   2. _state / _squadRec must be HashMaps; if only ONE argument was given, accept
+//      the single-HashMap form and fall back to the published snapshot.
+// Interchanging the two maps is then harmless.
+if (!(_gate isEqualType "")) then {
+    // Swapped arguments: the state arrived first and the gate id second.
+    if ((_gate isEqualType createHashMap) && { _state isEqualType "" }) then {
+        private _swap = _gate;
+        _gate = _state;
+        _state = _swap;
+    } else {
+        _gate = "gate_always";
+    };
+};
+if (!(_state isEqualType createHashMap)) then {
+    _state = missionNamespace getVariable ["FTCS_Menu_LastState", createHashMap];
+};
+if (!(_state isEqualType createHashMap)) then { _state = createHashMap; };
+if (!(_squadRec isEqualType createHashMap)) then { _squadRec = createHashMap; };
+
+// Result slots. Declared BEFORE the scratch slots so no later `private` in this
+// script can invalidate them (Lesson 34/37).
 private _enabled = true;
 private _reason = "";
 
@@ -149,6 +172,24 @@ switch (true) do {
     case (_gate find "gate_tech_" == 0): {
         _gWant = _gate select [10];
         if (_tech == _gWant) then { _enabled = false; _reason = "already active"; };
+    };
+
+    // ---- follow-mode row -----------------------------------------------------
+    // The row offers the mode the platoon is NOT in (ABS -> "switch to RELATIVE").
+    // It is meaningless before a platoon formation exists, so it stays grey while
+    // the platoon has NOT ordered one. "formation" is the common platoonFormation
+    // of the groups: "NONE" is the explicit "no formation ordered" state seeded by
+    // fn_registryInit; "" and "MIXED" (groups disagree) are treated the same way.
+    // Read from the registry, never introspected (Rule 20).
+    case (_gate == "gate_follow_mode"): {
+        _gLeader = _state getOrDefault ["leaderUnit", objNull];
+        if (isNull _gLeader) then {
+            _enabled = false; _reason = "commander not found";
+        } else {
+            if ((_state getOrDefault ["formation", "NONE"]) in ["", "NONE", "MIXED"]) then {
+                _enabled = false; _reason = "order a platoon formation first";
+            };
+        };
     };
 
     // ---- column layout gates -------------------------------------------------

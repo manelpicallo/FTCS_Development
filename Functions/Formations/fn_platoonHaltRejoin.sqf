@@ -39,6 +39,10 @@
      Registry layout:
          platoon entry (FTCS_Platoons_Registry > pltId [NUMBER key]):
              "orderState"            : "MARCH" | "HALTED" | "REJOINING"
+             "followMode"            : "REL" | "ABS" (read, never written here)
+             "advanceDirection" / "followModeFacing" : axis sentinels rewritten by
+                                       REJOIN-KEEP (they replace the former
+                                       company-wide axis globals)
              "haltSnapshotLeaderPos" : [x, y, z]
              "haltFacing"            : NUMBER
              "squads"                : ARRAY of GROUP (squad anchors, seeded by
@@ -192,22 +196,20 @@ if (_order == "HALT") then {
         _plt getOrDefault ["haltFacing", [_pltLeader] call FTCS_fnc_platoonAdvanceAxis]
     };
 
-    private _followModeR = missionNamespace getVariable ["FTCS_Platoon_Follow_Mode", "FOLLOWING_COMMANDER_REL"];
-    if (!(_followModeR in ["FOLLOWING_COMMANDER_REL", "FOLLOWING_COMMANDER_ABS"])) then {
-        _followModeR = "FOLLOWING_COMMANDER_REL";
-    };
+    private _followModeRaw = [_pltId, "followMode", "REL"] call FTCS_fnc_registryGetPlatoon;
+    private _followModeR = if (_followModeRaw == "ABS") then { "FOLLOWING_COMMANDER_ABS" } else { "FOLLOWING_COMMANDER_REL" };
 
     _plt set ["orderState", "REJOINING"];
     _registry set [_pltId, _plt];
     missionNamespace setVariable ["FTCS_Platoons_Registry", _registry];
 
     // VARIANT A (KEEP facing): pin the CANONICAL platoon axis to haltFacing
-    // BEFORE respawning the follow loops, in ALL THREE axis variables the
-    // pipeline can read:
-    //   REL -> FTCS_Platoon_Advance_Direction / Last_Commander_Dir
-    //   ABS -> FTCS_Platoon_Fixed_Abs_Dir (fn_platoonAdvanceAxis priority 2)
+    // BEFORE respawning the follow loops, in BOTH registry sentinels the axis
+    // resolution can read:
+    //   REL -> "advanceDirection"
+    //   ABS -> "followModeFacing" (fn_platoonAdvanceAxis priority 2)
     // Without the ABS write, KEEP was a no-op in absolute mode: the follow
-    // loops and fn_mvFormationShift kept projecting on whatever Fixed_Abs_Dir
+    // loops and fn_mvFormationShift kept projecting on whatever followModeFacing
     // value was in force before the HALT.
     // CONTRACT: in REL the frozen axis only governs the ARRIVAL deployment -
     // the active-march branch rewrites it live as soon as the lieutenant walks
@@ -215,9 +217,8 @@ if (_order == "HALT") then {
     // In ABS the frozen axis PERSISTS, which is the ABS contract (fixed
     // compass bearing until a new formation/ABS order).
     if (_facingMode == 0) then {
-        missionNamespace setVariable ["FTCS_Last_Commander_Dir", _rejoinFacing];
-        missionNamespace setVariable ["FTCS_Platoon_Advance_Direction", _rejoinFacing];
-        missionNamespace setVariable ["FTCS_Platoon_Fixed_Abs_Dir", _rejoinFacing];
+        [_pltId, "advanceDirection", _rejoinFacing] call FTCS_fnc_registrySetPlatoon;
+        [_pltId, "followModeFacing", _rejoinFacing] call FTCS_fnc_registrySetPlatoon;
     };
 
     // Gather participants exactly like HALT did (squads + fireteams + scouts).

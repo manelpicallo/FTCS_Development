@@ -14,7 +14,8 @@
         * "speed"              : [String] ("FULL", "NORMAL", "LIMITED").
         * "roe"                : [String] ("HOLD_FIRE", "FIRE_AT_WILL", "FIRE_IF_FIRED_UPON").
         * "task"               : [String] ("AT_WILL", "MOVING", "SUPPRESSING", "ATTACKING", "WATCHING", "WAITING").
-        * "platoonFormation"   : [String] Macro slot formation in the platoon deployment ("COLUMN", "WEDGE", "VEE", "LINE", "DIAMOND").
+        * "platoonFormation"   : [String] Macro slot formation in the platoon deployment ("NONE", "COLUMN", "WEDGE", "VEE", "LINE", "DIAMOND").
+                                   Seed: "NONE" = no formation order has been received yet.
         * "squadFormation"     : [String] Squad internal formation (written solely by formationsTypeSquadSet).
         * "teamFormation"      : [String] Team native formation as applied to the Arma group (written solely by formationsTypeSquadSet).
         * "allocationSlot"     : [Scalar] Numerical slot assignment in platoon formations (0, 1, 2, 3...).
@@ -390,7 +391,7 @@ private _registeredCount = 0;
                     ["speed", "NORMAL"],
                     ["roe", "FIRE_IF_FIRED_UPON"],
                     ["task", "AT_WILL"],
-                    ["platoonFormation", "COLUMN"],
+                    ["platoonFormation", "NONE"],
                     ["allocationSlot", _groupSlot],
                     ["formationPosition", [-1, -1, _leaderRef]],
                     ["relPosition", [-1, -1, _leaderRef]],
@@ -502,6 +503,15 @@ if (isNil "FTCS_Platoons_Registry") then { FTCS_Platoons_Registry = createHashMa
     // during migration (see fn_registrySetPlatoon below for the write-through).
     //
     //   movementTechnique : "CROSS_COUNTRY" | "ROAD_COLUMN" | "TRAIL_FILE"
+    //   followMode        : "REL" | "ABS" (the order the lieutenant gave the
+    //                       platoon; a squad/team that leaves the formation keeps
+    //                       its OWN exception in the group "movingMode")
+    //   followModeFacing  : NUMBER 0-360 (compass lock, meaningful in ABS; frozen
+    //                       axis reused by HALT/REJOIN-KEEP)
+    //   advanceDirection  : NUMBER 0-360 (live platoon axis of advance, REL)
+    //   columnLayout      : "STAGGERED" | "COMPACT" | "LEFT" | "RIGHT" (road) or
+    //                       "STAGGERED" | "COMPACT" (trail); "" = no column yet
+    //   edgeMarginSteps   : SCALAR 0..4 (road shoulder standoff, 3 m per step)
     //   roadPath          : ARRAY of [posATL, tangentDir, roadWidth]
     //   roadAnchor        : HASHMAP (road march anchor for this platoon)
     //   trailAnchor       : HASHMAP (trail column anchor for this platoon)
@@ -510,6 +520,29 @@ if (isNil "FTCS_Platoons_Registry") then { FTCS_Platoons_Registry = createHashMa
     // Only seeded when the registry does not carry them yet (preserve runtime).
     if (isNil { _existing get "movementTechnique" }) then {
         _existing set ["movementTechnique", _pltData2 getOrDefault ["movementTechnique", "CROSS_COUNTRY"]];
+    };
+    // Follow mode / axis (seeded from the legacy company-wide globals so a platoon
+    // starts in exactly the same state it had before this field existed).
+    if (isNil { _existing get "followMode" }) then {
+        private _legacyFollow = missionNamespace getVariable ["FTCS_Platoon_Follow_Mode", ""];
+        if ((_legacyFollow isEqualType "") && { _legacyFollow != "" }) then {
+            _existing set ["followMode", if (_legacyFollow == "FOLLOWING_COMMANDER_REL") then { "REL" } else { "ABS" }];
+        } else {
+            _existing set ["followMode", "ABS"];
+        };
+    };
+    if (isNil { _existing get "followModeFacing" }) then {
+        _existing set ["followModeFacing", missionNamespace getVariable ["FTCS_Platoon_Fixed_Abs_Dir", missionNamespace getVariable ["FTCS_Platoon_Advance_Direction", 0]]];
+    };
+    if (isNil { _existing get "advanceDirection" }) then {
+        _existing set ["advanceDirection", missionNamespace getVariable ["FTCS_Platoon_Advance_Direction", 0]];
+    };
+    // March-column sentinels: "" and 0 until the first column order writes them.
+    if (isNil { _existing get "columnLayout" }) then {
+        _existing set ["columnLayout", ""];
+    };
+    if (isNil { _existing get "edgeMarginSteps" }) then {
+        _existing set ["edgeMarginSteps", 0];
     };
     if (isNil { _existing get "roadPath" }) then {
         _existing set ["roadPath", _pltData2 getOrDefault ["roadPath", []]];
@@ -580,7 +613,9 @@ if (isNil "FTCS_Platoons_Registry") then { FTCS_Platoons_Registry = createHashMa
     private _p2Tech = _existing getOrDefault ["movementTechnique", "<missing>"];
     private _p2Road = count (_existing getOrDefault ["roadPath", []]);
     private _p2Slots = count (_existing getOrDefault ["formationSlots", createHashMap]);
-    diag_log format ["[FTCS][REGISTRY] plt %1 state: movementTechnique='%2' roadPath=%3 formationSlots=%4", _pltNum, _p2Tech, _p2Road, _p2Slots];
+    private _p2Follow = _existing getOrDefault ["followMode", "<missing>"];
+    private _p2Layout = _existing getOrDefault ["columnLayout", "<missing>"];
+    diag_log format ["[FTCS][REGISTRY] plt %1 state: movementTechnique='%2' roadPath=%3 formationSlots=%4 followMode='%5' columnLayout='%6'", _pltNum, _p2Tech, _p2Road, _p2Slots, _p2Follow, _p2Layout];
 
     FTCS_Platoons_Registry set [_pltNum, _existing];
 } forEach _platoonsMap;
@@ -601,7 +636,7 @@ if (isNil "FTCS_Platoons_Registry") then { FTCS_Platoons_Registry = createHashMa
                 ["speed", "NORMAL"],
                 ["roe", "FIRE_IF_FIRED_UPON"],
                 ["task", "AT_WILL"],
-                ["platoonFormation", "COLUMN"],
+                ["platoonFormation", "NONE"],
                 ["allocationSlot", -1],
                 ["formationPosition", [-1, -1, FTCS_Group_Commander]],
                 ["relPosition", [-1, -1, FTCS_Group_Commander]],
@@ -628,7 +663,7 @@ if (isNil "FTCS_Platoons_Registry") then { FTCS_Platoons_Registry = createHashMa
             ["speed", "NORMAL"],
             ["roe", "FIRE_IF_FIRED_UPON"],
             ["task", "AT_WILL"],
-            ["platoonFormation", "COLUMN"],
+            ["platoonFormation", "NONE"],
             ["allocationSlot", -1],
             ["formationPosition", [-1, -1, FTCS_Group_Commander]],
             ["relPosition", [-1, -1, FTCS_Group_Commander]],
