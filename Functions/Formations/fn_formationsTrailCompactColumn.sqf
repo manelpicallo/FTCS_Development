@@ -30,8 +30,11 @@
                    while every team still marches exactly on the leader's line.
                  - Groups with trailOffsetDist > 0 participate; forward/center
                    entries are untouched (same criteria as road compact).
-                 - Lane state is reset for every code group: `trailLaneTargetIdx`
-                   returns to -1 (the new ceilings are lower) and groups that do
+                 - Lane state is LEFT UNTOUCHED: `trailLaneTargetIdx` belongs to the
+                   follow loop and is neither reset to -1 nor re-indexed here. Each
+                   participating group is displaced IN PLACE instead: its target point
+                   is its CURRENT position pushed sideways by the new shoulder offset,
+                   so it slides into the lane without walking back. Groups that do
                    NOT participate lose any stale shoulder offset.
                  - Marks the trail anchor columnLayout = "COMPACT" (locks the
                    menu option until the trail order is re-issued).
@@ -66,7 +69,7 @@
 
 params [["_pltId", 1]];
 
-private _pairHalfSeparation = 0.75; // lateral meters each member deviates from the walked line
+private _pairHalfSeparation = 1.0;  // lateral meters each member deviates from the walked line
 private _pairStep = 1.0;            // longitudinal split inside a pair (distinct arclengths)
 private _pairGap = 3.0;             // meters between consecutive pairs
 
@@ -74,10 +77,11 @@ private _pairGap = 3.0;             // meters between consecutive pairs
 // constants): a team occupies `(men - 1) * soldierPace` behind its first man and
 // reserves `separateDist` (body + separation) before the next team.
 private _soldierPace  = 3.0;
-private _separateDist = 8.0;
+private _separateDist = 2.0;
 
 private _anchor = missionNamespace getVariable [format ["FTCS_Trail_Anchor_PLT_%1", _pltId], createHashMap];
-if (count (_anchor getOrDefault ["trailPath", []]) < 2) exitWith {
+private _trailPath = _anchor getOrDefault ["trailPath", []];
+if (count _trailPath < 2) exitWith {
     systemChat "[TRAIL COMPACT] Error: no active trail column (anchor missing).";
     0
 };
@@ -147,9 +151,26 @@ for "_i" from 0 to (_count - 1) step 2 do {
 
         _entry set ["trailOffsetDist", _cursor + (_memberRank * _pairStep)];
         _entry set ["trailShoulderOffset", (_pairHalfSeparation * _side)];
-        // New ceilings: drop the lane target so the group re-picks its first point
-        // on the next tick (an old index would make it renew backwards).
-        _entry set ["trailLaneTargetIdx", -1];
+        // THE LANE CURSOR BELONGS TO THE FOLLOW LOOP - this function must NOT touch
+        // `trailLaneTargetIdx`:
+        //   * -1 means "brand new column": the loop walks the group from the head of
+        //     the trail, so every group retraces the track it already walked.
+        //   * the index of the NEW arclength lands AHEAD of the queue's still-OLD
+        //     `trailSlotIndex`, so the loop considers the group to be past its ceiling
+        //     and walks it backwards to the head once more.
+        // Instead the group is displaced IN PLACE: the target point is its CURRENT
+        // position pushed sideways by the new shoulder offset. The loop keeps its
+        // cursor, the queue publishes the new seat on its next tick, and the group
+        // slides into the lane where it already stands.
+        private _grpObj = [_grpId] call _fnc_resolveGroup;
+        if (!isNull _grpObj) then {
+            private _lead = leader _grpObj;
+            if (!isNull _lead) then {
+                private _sh = _pairHalfSeparation * _side;
+                private _perpDir = if (_sh < 0) then { (getDir _lead + 270) % 360 } else { (getDir _lead + 90) % 360 };
+                _entry set ["trailTargetPos", (getPosATL _lead) getPos [abs _sh, _perpDir]];
+            };
+        };
         FTCS_Groups_Registry_Table set [_grpId, _entry];
 
         _memberRank = _memberRank + 1;

@@ -578,12 +578,30 @@ switch (_commandCode) do {
             };
         } forEach FTCS_Groups_Registry_Table;
 
-        // HQ element slots: Support -> 4, Command -> 9, Guide -> 10 (doctrine
-        // order). Resolved from the HQ squad's own group list, never by name.
-        private _hqBucket = _squadElementsMap getOrDefault [format ["SQD_%1_0", _pltId], []];
-        if (count _hqBucket >= 1) then { _slottedElements set [9, [_hqBucket select 0]]; };
-        if (count _hqBucket >= 2) then { _slottedElements set [4, [_hqBucket select 1]]; };
-        if (count _hqBucket >= 3) then { _slottedElements set [10, [_hqBucket select 2]]; };
+        // HQ element slots resolved BY ROLE from the REGISTRY sentinel
+        // `hqElementRole` (seeded in fn_registryInit from the doctrine role each
+        // team carries). This replaces the old `_hqBucket select N`, which took the
+        // teams in HashMap iteration order and therefore placed Command/Support/
+        // Guide at random - the road column showed the Guide beside the lieutenant.
+        // Same slots as the cross-country COLUMN doctrine:
+        //   COMMAND -> 9 (beside the leader) / SUPPORT -> 4 / GUIDE -> 10 (rear).
+        private _hqSquadId = format ["SQD_%1_0", _pltId];
+        {
+            private _gEntry = _y;
+            if ((_gEntry getOrDefault ["squadId", ""]) == _hqSquadId) then {
+                private _role = _gEntry getOrDefault ["hqElementRole", ""];
+                private _grp = _liveMapSlot getOrDefault [_x, grpNull];
+                if (!isNull _grp && { _grp != _leaderGroup } && { _role != "" }) then {
+                    private _slotForRole = switch (_role) do {
+                        case "COMMAND": { 9 };
+                        case "SUPPORT": { 4 };
+                        case "GUIDE":   { 10 };
+                        default { -1 };
+                    };
+                    if (_slotForRole >= 0) then { _slottedElements set [_slotForRole, [_grp]]; };
+                };
+            };
+        } forEach FTCS_Groups_Registry_Table;
 
         // Default combat-squad slots: SQD_X_1..4 -> slots 0..3
         {

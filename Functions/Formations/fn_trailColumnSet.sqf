@@ -111,7 +111,21 @@ private _chained = [];
 {
     if (!isNull _x && { _x != group _leader }) then {
         private _gid = groupId _x;
-        private _slot = (FTCS_Groups_Registry_Table getOrDefault [_gid, createHashMap]) getOrDefault ["allocationSlot", -1];
+        private _gEntry = FTCS_Groups_Registry_Table getOrDefault [_gid, createHashMap];
+        // HQ sub-teams are ranked by their REGISTRY ROLE sentinel, not by the raw
+        // `allocationSlot` the doctrine seeder happened to give them: the three HQ
+        // elements must land on the SAME slots the cross-country COLUMN doctrine
+        // uses (COMMAND 9 / SUPPORT 4 / GUIDE 10), regardless of seed order.
+        private _hqRole = _gEntry getOrDefault ["hqElementRole", ""];
+        private _slot = _gEntry getOrDefault ["allocationSlot", -1];
+        if (_hqRole != "") then {
+            _slot = switch (_hqRole) do {
+                case "COMMAND": { 9 };
+                case "SUPPORT": { 4 };
+                case "GUIDE":   { 10 };
+                default { _slot };
+            };
+        };
         if (!(_slot isEqualType 0) || { _slot < 0 }) then { _slot = -1; };
         // `find` returns -1 when the slot is not in the list (including 6/7/8, the
         // forward scouts, and -1 for groups with no slot): those go to the tail.

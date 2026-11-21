@@ -382,6 +382,22 @@ private _registeredCount = 0;
             // Keep the reference for logging clarity (leader may hold no role)
             if (isNull _groupLeader) then { _groupLeader = objNull; };
 
+            // hqElementRole: WHICH platoon-HQ element this group is, resolved from the
+            // doctrine ROLE it carries (never from HashMap order, never by display name):
+            //   PLATOON_LEADER            -> "COMMAND"  (slot 9, beside the lieutenant)
+            //   PLATOON_SERGEANT          -> "SUPPORT"  (slot 4, behind the 1st squad)
+            //   PLATOON_GUIDE             -> "GUIDE"    (slot 10, rear of the column)
+            //   anything else / no role   -> ""
+            // This is the single deterministic input for cross-country, road and trail,
+            // so the three pipelines cannot disagree about who goes where (Rule 20).
+            private _hqElementRole = "";
+            if (_pltHqSquadId == _sqdId) then {
+                private _rk = toUpper _roleKey;
+                if (_rk find "PLATOON_LEADER" >= 0) then { _hqElementRole = "COMMAND"; };
+                if (_rk find "PLATOON_SERGEANT" >= 0) then { _hqElementRole = "SUPPORT"; };
+                if (_rk find "PLATOON_GUIDE" >= 0) then { _hqElementRole = "GUIDE"; };
+            };
+
             // Skip already registered groups (idempotent initialization)
             if !(_groupID in FTCS_Groups_Registry_Table) then {
                 FTCS_Groups_Registry_Table set [_groupID, createHashMapFromArray [
@@ -401,7 +417,8 @@ private _registeredCount = 0;
                     ["isSquadLeaderGroup", _isSquadLeaderGroup],
                     ["platoonId", _pltNumSeed],
                     ["roleKey", _roleKey],
-                    ["tacticalRole", _groupTeamRole]
+                    ["tacticalRole", _groupTeamRole],
+                    ["hqElementRole", _hqElementRole]
                 ]];
                 _registeredCount = _registeredCount + 1;
             } else {
@@ -413,6 +430,7 @@ private _registeredCount = 0;
                 _exEntry set ["platoonId", _pltNumSeed];
                 _exEntry set ["roleKey", _roleKey];
                 _exEntry set ["tacticalRole", _groupTeamRole];
+                _exEntry set ["hqElementRole", _hqElementRole];
                 FTCS_Groups_Registry_Table set [_groupID, _exEntry];
             };
         } forEach _squadGroups;

@@ -106,21 +106,19 @@ private _team3Grp = grpNull;
 private _extraHqGrps = [];
 
 {
-    private _tKey = toUpper _x;
     private _hGrp = (_y) getOrDefault ["group", grpNull];
     if (!isNull _hGrp && {_hGrp != _leaderGroup}) then {
-        if (_tKey find "TEAM_1" >= 0 || _tKey find "COMMAND" >= 0) then {
-            if (isNull _team1Grp) then { _team1Grp = _hGrp; } else { _extraHqGrps pushBack _hGrp; };
-        } else {
-            if (_tKey find "TEAM_2" >= 0 || _tKey find "SUPPORT" >= 0) then {
-                if (isNull _team2Grp) then { _team2Grp = _hGrp; } else { _extraHqGrps pushBack _hGrp; };
-            } else {
-                if (_tKey find "TEAM_3" >= 0 || _tKey find "GUIDE" >= 0 || _tKey find "SECURITY" >= 0) then {
-                    if (isNull _team3Grp) then { _team3Grp = _hGrp; } else { _extraHqGrps pushBack _hGrp; };
-                } else {
-                    _extraHqGrps pushBack _hGrp;
-                };
-            };
+        // Which HQ element this group is comes from the REGISTRY sentinel
+        // `hqElementRole` (seeded in fn_registryInit from the doctrine role the
+        // team carries). Reading the doctrine team KEY here would violate Rule 16
+        // and, worse, tie the placement to the key naming convention.
+        private _hEntry = FTCS_Groups_Registry_Table getOrDefault [groupId _hGrp, createHashMap];
+        private _hRole = _hEntry getOrDefault ["hqElementRole", ""];
+        switch (_hRole) do {
+            case "COMMAND": { if (isNull _team1Grp) then { _team1Grp = _hGrp; } else { _extraHqGrps pushBack _hGrp; }; };
+            case "SUPPORT": { if (isNull _team2Grp) then { _team2Grp = _hGrp; } else { _extraHqGrps pushBack _hGrp; }; };
+            case "GUIDE":   { if (isNull _team3Grp) then { _team3Grp = _hGrp; } else { _extraHqGrps pushBack _hGrp; }; };
+            default { _extraHqGrps pushBack _hGrp; };
         };
     };
 } forEach _hqTeams;

@@ -391,6 +391,19 @@ n      │     squad). Persistente: solo una nueva orden de formación la sobres
       │     consumidores deben seguir usando isPlayer / FTCS_Platoon_Leader_Unit.
       │     Escritor único: fn_registryInit.
       │
+      ├── "hqElementRole"     : ENUM STRING (Qué elemento del HQ del pelotón ES este grupo)
+      │     Valores: "COMMAND" | "SUPPORT" | "GUIDE" | ""
+      │     Resolución (fn_registryInit): SOLO para grupos cuyo squadId es SQD_<N>_0.
+      │     Se deriva del roleKey ya calculado:
+      │       contiene PLATOON_LEADER   -> "COMMAND"  (slot 9, junto al teniente)
+      │       contiene PLATOON_SERGEANT -> "SUPPORT"  (slot 4, tras la 1ª escuadra)
+      │       contiene PLATOON_GUIDE    -> "GUIDE"    (slot 10, cola de la columna)
+      │     DETERMINISTA: no depende del orden de iteración de ningún HashMap.
+      │     Escritor único: fn_registryInit. Lectores: los TRES pipelines de marcha
+      │     (fn_formationsApplyPlatoonOrder, fn_applyCommandToTarget PLT_ROAD_COLUMN,
+      │     fn_trailColumnSet), para que cross-country, carretera y trail coloquen el
+      │     HQ en los MISMOS slots. Cumple la Regla 16 (no se relee la doctrina).
+      │
       ├── "tacticalRole"      : STRING (Rol táctico doctrinal del team)
       │     Valores censados: "ASSAULT" | "SCOUT" | "SUPPORT" | "HQ_ELEMENT" | "" 
       │     Origen: doctrine template "teamRoles" -> fn_applyDoctrine -> parsedSquads
